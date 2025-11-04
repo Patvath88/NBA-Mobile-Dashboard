@@ -1,5 +1,5 @@
 # ======================================================
-# 🏀 FUTURECOURT NBA AI — Futuristic Dashboard
+# 🏀 FUTURECOURT NBA AI — Futuristic Animated Dashboard
 # ======================================================
 
 import streamlit as st
@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ======================================================
-# 🌌 FUTURECOURT DASHBOARD THEME & PAGE CONFIG
+# 🌌 FUTURECOURT DASHBOARD CONFIG
 # ======================================================
 
 st.set_page_config(
@@ -27,46 +27,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown(
-    """
-    <style>
-    body {
-        background: linear-gradient(120deg, #0f2027, #203a43, #2c5364);
-        color: white;
-        font-family: 'Segoe UI', sans-serif;
-    }
-    .stApp {
-        background: transparent;
-    }
-    .metric-card {
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 15px;
-        padding: 1rem;
-        box-shadow: 0 0 10px rgba(0,0,0,0.3);
-        transition: all 0.3s ease-in-out;
-    }
-    .metric-card:hover {
-        transform: scale(1.02);
-        box-shadow: 0 0 20px rgba(255,255,255,0.2);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Custom futuristic styling
+st.markdown("""
+<style>
+body {
+    background: radial-gradient(circle at 10% 20%, #0a0f1a 0%, #09121b 100%);
+    color: white;
+    font-family: 'Segoe UI', sans-serif;
+}
+.stApp {
+    background: transparent;
+}
+h1, h2, h3, h4 {
+    color: #00FFFF;
+}
+div[data-testid="stMetricValue"] {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #00FFFF;
+}
+.metric-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0,255,255,0.2);
+    border-radius: 15px;
+    padding: 1rem;
+    box-shadow: 0 0 20px rgba(0,255,255,0.2);
+    transition: all 0.3s ease-in-out;
+    text-align: center;
+}
+.metric-card:hover {
+    transform: scale(1.03);
+    box-shadow: 0 0 40px rgba(0,255,255,0.4);
+}
+@keyframes pulse {
+    0% { box-shadow: 0 0 10px rgba(0,255,255,0.2); }
+    50% { box-shadow: 0 0 25px rgba(0,255,255,0.6); }
+    100% { box-shadow: 0 0 10px rgba(0,255,255,0.2); }
+}
+.metric-animate {
+    animation: pulse 2s infinite;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ======================================================
-# 🧠 HEADER & ANIMATION
+# 🧠 HEADER
 # ======================================================
 
 col1, col2 = st.columns([0.7, 0.3])
 with col1:
-    st.title("🏀 FutureCourt NBA AI Dashboard")
-    st.markdown("#### Predict NBA player performance with advanced AI models — powered by XGBoost.")
+    st.title("🏀 FutureCourt NBA AI")
+    st.markdown("#### Predict player performance with futuristic AI precision.")
 with col2:
     try:
-        url = "https://assets4.lottiefiles.com/packages/lf20_x62chJ.json"
-        lottie = requests.get(url).json()
-        st_lottie(lottie, height=150, key="nba_lottie")
+        lottie_url = "https://assets4.lottiefiles.com/packages/lf20_x62chJ.json"
+        lottie_json = requests.get(lottie_url).json()
+        st_lottie(lottie_json, height=150, key="nba_lottie")
     except Exception:
         pass
 
@@ -78,16 +94,17 @@ st.divider()
 
 player_name = st.text_input("Enter player name", placeholder="e.g. Luka Doncic")
 
-if st.button("Run Predictions"):
+if st.button("🚀 Generate Prediction"):
     if not player_name:
-        st.warning("Please enter a valid player name to continue.")
+        st.warning("Please enter a valid player name.")
     else:
-        with st.spinner("⚙️ Training model and generating predictions..."):
+        with st.spinner("🤖 Crunching numbers and running AI models..."):
             try:
                 player_id = get_player_id(player_name)
                 context = get_player_context(player_name)
+
                 if not context:
-                    st.error("Unable to retrieve player data.")
+                    st.error("Unable to fetch player data. Try another name.")
                 else:
                     df = build_feature_dataset(player_id)
                     if df is None or df.empty:
@@ -97,33 +114,56 @@ if st.button("Run Predictions"):
                         preds = predict_next_game(df)
 
                         # ======================================================
-                        # 📊 RESULTS DISPLAY
+                        # ⚡️ Animated Metric Cards
                         # ======================================================
-                        st.subheader(f"📈 Predicted Next Game Stats for {player_name}")
+                        st.subheader(f"✨ Predicted Next Game — {player_name}")
 
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Points", f"{preds.get('PTS', 0):.1f}")
-                        c2.metric("Rebounds", f"{preds.get('REB', 0):.1f}")
-                        c3.metric("Assists", f"{preds.get('AST', 0):.1f}")
-                        style_metric_cards(border_color="white", border_left_color="#00FFFF")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown(
+                                f"""
+                                <div class="metric-card metric-animate">
+                                    <h3>Points</h3>
+                                    <p style="font-size:2rem;">{preds.get('PTS', 0):.1f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        with col2:
+                            st.markdown(
+                                f"""
+                                <div class="metric-card metric-animate">
+                                    <h3>Rebounds</h3>
+                                    <p style="font-size:2rem;">{preds.get('REB', 0):.1f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        with col3:
+                            st.markdown(
+                                f"""
+                                <div class="metric-card metric-animate">
+                                    <h3>Assists</h3>
+                                    <p style="font-size:2rem;">{preds.get('AST', 0):.1f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-                        # Model metrics
                         st.divider()
-                        st.markdown("### 🧩 Model Evaluation Metrics")
+
+                        # ======================================================
+                        # 🧩 Model Metrics
+                        # ======================================================
+                        st.markdown("### 🧮 Model Performance Metrics")
                         metrics_df = sanitize_dataframe_for_streamlit(pd.DataFrame(results).T)
                         st.dataframe(metrics_df, width="stretch")
 
-                        # Visuals
-                        st.divider()
-                        st.markdown("### 🔮 Recent Performance Trend")
-                        df_vis = df.tail(10).copy()
-                        df_vis = sanitize_dataframe_for_streamlit(df_vis)
+                        # ======================================================
+                        # 📊 Visual Trends
+                        # ======================================================
+                        st.markdown("### 📈 Last 10 Games Performance")
+                        df_vis = sanitize_dataframe_for_streamlit(df.tail(10))
                         fig = px.line(
                             df_vis,
                             x="GAME_DATE",
                             y=["PTS", "REB", "AST"],
                             markers=True,
-                            title=f"Recent 10 Games — {player_name}",
+                            title=f"{player_name} — Last 10 Games Trend",
                             template="plotly_dark"
                         )
                         st.plotly_chart(fig, use_container_width=True)
@@ -132,4 +172,4 @@ if st.button("Run Predictions"):
                 st.error(f"Error during prediction: {e}")
 
 else:
-    st.info("👆 Enter a player name above and click **Run Predictions** to start.")
+    st.info("💡 Enter a player name and click **Generate Prediction** to begin.")
