@@ -122,25 +122,50 @@ def get_team_defensive_metrics(season: str = "2024-25"):
 
 @st.cache_data(ttl=300)
 def get_player_context(player_name: str, opponent_team: str, season: str = "2024-25"):
-    """Combine player and opponent team context with pace and defensive rating."""
+    """Combine player recent stats and opponent team context with pace and defensive rating."""
     try:
         player_id = get_player_id(player_name)
         gamelog_df = get_player_gamelog(player_id, season)
         team_metrics_df = get_team_defensive_metrics(season)
 
-        # Fuzzy match opponent
-        opp_match = get_close_matches(opponent_team, team_metrics_df["Team"].tolist(), n=1, cutoff=0.6)
-        opponent_df = team_metrics_df[team_metrics_df["Team"] == opp_match[0]] if opp_match else pd.DataFrame()
+        # Safety: handle missing or malformed team_metrics_df
+        if team_metrics_df is None or team_metrics_df.empty:
+            st.warning("Team defensive metrics unavailable. Using empty opponent context.")
+            opponent_df = pd.DataFrame()
+        elif "Team" not in team_metrics_df.columns:
+            st.warning("Unexpected defensive metrics format (no 'Team' column).")
+            opponent_df = pd.DataFrame()
+        else:
+            # Fuzzy match opponent name
+            from difflib import get_close_matches
+            team_names = team_metrics_df["Team"].tolist()
+            opp_match = get_close_matches(opponent_team, team_names, n=1, cutoff=0.5)
+            opponent_df = (
+                team_metrics_df[team_metrics_df["Team"] == opp_match[0]]
+                if opp_match
+                else pd.DataFrame()
+            )
 
         context = {
             "player": player_name,
-            "season_avg": get_season_averages(player_id, season).to_dict() if not gamelog_df.empty else {},
+            "season_avg": (
+                get_season_averages(player_id, season).to_dict()
+                if not gamelog_df.empty
+                else {}
+            ),
             "recent_games": gamelog_df.tail(10) if not gamelog_df.empty else pd.DataFrame(),
-            "opponent_metrics": opponent_df.to_dict(orient="records")[0] if not opponent_df.empty else {}
+            "opponent_metrics": opponent_df.to_dict(orient="records")[0]
+            if not opponent_df.empty
+            else {},
         }
 
         return context
 
     except Exception as e:
         st.error(f"Error building player context: {e}")
-        return {"player": player_name, "season_avg": {}, "recent_games": pd.DataFrame(), "opponent_metrics": {}}
+        return {
+            "player": player_name,
+            "season_avg": {},
+            "recent_games": pd.DataFrame(),
+            "opponent_metrics": {},
+        }
