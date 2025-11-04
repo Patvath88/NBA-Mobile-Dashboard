@@ -1,14 +1,15 @@
 # -------------------------------------------------
 # 🔥 HOT SHOT PROPS — NBA AI DASHBOARD (Mobile-Optimized)
 # -------------------------------------------------
+import subprocess, sys
+# ✅ Ensure required packages are available
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "plotly", "nba_api", "scikit-learn"])
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import subprocess, sys
-# Force install plotly if missing
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "plotly"])
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, date
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog, leagueleaders
 from sklearn.ensemble import RandomForestRegressor
@@ -47,7 +48,7 @@ st.title("🏀 Hot Shot Props — NBA AI Dashboard (Mobile)")
 # ---------------- UTILITIES ----------------
 @st.cache_data(ttl=3600)
 def get_leaders():
-    df = leagueleaders.LeagueLeaders(season="2025-26").get_data_frames()[0]
+    df = leagueleaders.LeagueLeaders(season="2024-25").get_data_frames()[0]
     df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
     return df[["PLAYER","TEAM","PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]].head(10)
 
@@ -66,7 +67,7 @@ def get_player_photo(pid):
     return None
 
 @st.cache_data(ttl=1200)
-def get_games(pid, season="2025-26"):
+def get_games(pid, season="2024-25"):
     try:
         df = playergamelog.PlayerGameLog(player_id=pid, season=season).get_data_frames()[0]
         df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
@@ -75,6 +76,21 @@ def get_games(pid, season="2025-26"):
         return df
     except Exception:
         return pd.DataFrame()
+
+def get_current_season():
+    today = date.today()
+    start_year = today.year if today.month >= 10 else today.year - 1
+    return f"{start_year}-{str(start_year+1)[2:]}"
+
+def get_games_auto(pid):
+    """Auto-detect season and fallback."""
+    season = get_current_season()
+    df = get_games(pid, season)
+    if df.empty:
+        prev_year = int(season.split("-")[0]) - 1
+        prev = f"{prev_year}-{str(prev_year+1)[2:]}"
+        df = get_games(pid, prev)
+    return df
 
 def predict_next(series):
     if len(series) < 3: return 0
@@ -103,40 +119,23 @@ player_name = st.selectbox("Select Player", [""] + player_list)
 
 if player_name:
     pid = next(p["id"] for p in nba_players if p["full_name"] == player_name)
-    # Try current and previous season to ensure data loads
-# Try current and previous season to ensure data loads
-df = get_games(pid, "2025-26")
-if df.empty:
-    df = get_games(pid, "2024-25")
+    df = get_games_auto(pid)
 
-if df.empty:
-    st.warning("No game data available yet.")
-else:
-    stats = ["PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]
-    preds = {s: predict_next(df[s]) for s in stats}
-    col_img, col_txt = st.columns([1,3])
-    with col_img:
-        photo = get_player_photo(pid)
-        if photo:
-            st.image(photo, width=140)
-    with col_txt:
-        st.subheader(player_name)
-        st.caption("Projected Next Game (AI Forecast)")
-    for s, v in preds.items():
-        st.markdown(
-            f"<div class='metric-card'><b>{s}</b><br>{v}</div>",
-            unsafe_allow_html=True
-        )
+    if df.empty:
+        st.warning("No game data available yet. (Try another player)")
     else:
         stats = ["PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]
         preds = {s: predict_next(df[s]) for s in stats}
+
         col_img, col_txt = st.columns([1,3])
         with col_img:
             photo = get_player_photo(pid)
-            if photo: st.image(photo, width=140)
+            if photo:
+                st.image(photo, width=140)
         with col_txt:
             st.subheader(player_name)
-            st.caption(f"Projected Next Game (AI Forecast)")
+            st.caption(f"Projected Next Game ({get_current_season()} Season)")
+
         for s,v in preds.items():
             st.markdown(f"<div class='metric-card'><b>{s}</b><br>{v}</div>", unsafe_allow_html=True)
 
