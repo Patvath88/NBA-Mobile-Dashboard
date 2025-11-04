@@ -2,7 +2,7 @@
 # 🏀 FUTURECOURT NBA AI — Futuristic Animated Dashboard
 # ======================================================
 
-import streamlit as st
+import streamlit as st  # ✅ Import FIRST to avoid NameError
 import pandas as pd
 import plotly.express as px
 from utils.data_loader import get_player_context, get_player_id
