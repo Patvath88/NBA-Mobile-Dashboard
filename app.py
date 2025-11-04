@@ -4,170 +4,196 @@ import pandas as pd
 import plotly.express as px
 from utils.data_loader import get_player_context, get_player_id
 from utils.feature_engineer import build_feature_dataset
-from utils.model_utils import train_xgboost_models, predict_next_game, evaluate_model_performance
+from utils.model_utils import train_xgboost_models, predict_next_game
+from streamlit_extras.metric_cards import style_metric_cards
+from streamlit_lottie import st_lottie
+import requests
 import warnings
-
 warnings.filterwarnings("ignore")
 
-# ------------------------------
-# ⚙️ PAGE CONFIG
-# ------------------------------
+# ======================================================
+# 🧠 APP CONFIG
+# ======================================================
 st.set_page_config(
-    page_title="🏀 Hot Shot NBA Predictor",
-    page_icon="🏀",
+    page_title="🏀 NBA Predictive Dashboard — FutureCourt Edition",
     layout="wide",
-    initial_sidebar_state="expanded"
+    page_icon="🏀",
+    initial_sidebar_state="collapsed"
 )
 
-# ------------------------------
-# 🎨 CUSTOM DARK THEME CSS
-# ------------------------------
-st.markdown("""
-    <style>
-    body { background-color: #0D0D0D; color: #F5F5F5; }
-    [data-testid="stSidebar"] { background-color: #111; }
-    h1, h2, h3, h4 { color: #FFD700; }
-    .stButton>button {
-        background-color: #F97316;
-        color: white;
-        border-radius: 10px;
-        height: 3em;
-        width: 100%;
-        font-weight: bold;
+# ======================================================
+# 🎨 LOAD CUSTOM CSS
+# ======================================================
+def load_custom_css():
+    css = """
+    /* =============== FUTURECOURT THEME =============== */
+    body {
+        background: radial-gradient(circle at 25% 25%, #0d0d0f, #050505 80%);
+        color: #f8f8f8;
+        font-family: 'Inter', sans-serif;
     }
-    .stButton>button:hover {
-        background-color: #FFB84D;
-        color: black;
+    h1, h2, h3, h4 {
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #f7a600;
+        letter-spacing: 0.5px;
     }
-    </style>
-""", unsafe_allow_html=True)
+    .stApp {
+        background-color: transparent !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 2.2rem !important;
+        font-weight: 700;
+        color: #ffb347 !important;
+        text-shadow: 0 0 20px #ffb34788;
+    }
+    [data-testid="stMetricLabel"] {
+        text-transform: uppercase;
+        color: #aaa !important;
+        font-size: 0.8rem;
+    }
+    div.stButton > button {
+        background: linear-gradient(135deg, #f97316, #facc15);
+        color: black !important;
+        border-radius: 8px;
+        font-weight: 700;
+        transition: all 0.3s ease;
+        border: none;
+    }
+    div.stButton > button:hover {
+        background: linear-gradient(135deg, #facc15, #f97316);
+        transform: scale(1.05);
+        box-shadow: 0 0 20px #facc1577;
+    }
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+    /* ✨ Fade In Animation */
+    @keyframes fadeIn {
+        from {opacity: 0; transform: translateY(10px);}
+        to {opacity: 1; transform: translateY(0);}
+    }
+    .main {
+        animation: fadeIn 0.9s ease-in-out;
+    }
+    /* ✨ Pulsing Glow Background */
+    @keyframes pulse {
+        0% { background: radial-gradient(circle at 50% 50%, #facc1555, transparent 70%); }
+        50% { background: radial-gradient(circle at 50% 50%, #f9731655, transparent 70%); }
+        100% { background: radial-gradient(circle at 50% 50%, #facc1555, transparent 70%); }
+    }
+    body::before {
+        content: "";
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        z-index: -1;
+        animation: pulse 12s infinite;
+        background-size: 200% 200%;
+    }
+    """
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-# ------------------------------
-# 🧹 HELPER FUNCTIONS
-# ------------------------------
-def sanitize_df(df: pd.DataFrame):
-    """Ensure DataFrame is Arrow-safe for Streamlit."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = df.copy()
-    for c in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[c]):
-            df[c] = df[c].astype(str)
-        if df[c].dtype == "object":
-            df[c] = df[c].apply(lambda x: str(x) if not isinstance(x, (int, float)) else x)
-    return df
+load_custom_css()
 
+# ======================================================
+# 🏀 HEADER
+# ======================================================
+st.title("🏀 NBA Predictive Dashboard — FutureCourt Edition")
+st.caption("Real-time Player Insights • Predictive Modeling • AI-Powered Analysis")
 
-def safe_plot(df, player_name):
-    """Safe plot function for player stat trends."""
-    if "GAME_DATE" not in df.columns:
-        st.warning("No GAME_DATE column found — unable to plot trends.")
-        return
-    if not all(c in df.columns for c in ["PTS", "REB", "AST"]):
-        st.warning("Missing stat columns for plotting.")
-        return
+# Lottie animation (basketball)
+def load_lottieurl(url):
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
 
-    # Create PRA column
-    df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
-    for col in ["PTS", "REB", "AST", "PRA"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+lottie_url = "https://assets5.lottiefiles.com/packages/lf20_jyjjgplv.json"
+st_lottie(load_lottieurl(lottie_url), height=120, key="lottie-basketball")
 
-    fig = px.line(
-        df,
-        x="GAME_DATE",
-        y=["PTS", "REB", "AST", "PRA"],
-        title=f"{player_name} - Recent Game Trends",
-        template="plotly_dark",
-        markers=True
-    )
-    st.plotly_chart(fig, width="stretch")
+# ======================================================
+# 🔍 PLAYER SEARCH
+# ======================================================
+player_name = st.text_input("Enter Player Name (e.g. Luka Doncic)", "")
+opponent = st.text_input("Next Opponent Team Name (e.g. Boston Celtics)", "")
 
-
-# ------------------------------
-# 🧭 SIDEBAR NAVIGATION
-# ------------------------------
-page = st.sidebar.radio(
-    "📊 Navigate",
-    ["🏀 Player Viewer", "🧠 Model Predictor", "📈 Live Tracker"]
-)
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Powered by 🧠 Code GPT + XGBoost")
-
-# ------------------------------
-# 🧍 PLAYER VIEWER
-# ------------------------------
-if page == "🏀 Player Viewer":
-    st.title("🏀 Player Performance Viewer")
-
-    player_name = st.text_input("Enter Player Name:", "LeBron James")
-    opponent = st.text_input("Next Opponent Team:", "Boston Celtics")
-
-    if st.button("Fetch Player Data"):
-        with st.spinner("Loading data..."):
+# ======================================================
+# ⚙️ FETCH PLAYER DATA
+# ======================================================
+if st.button("Fetch Player Data"):
+    with st.spinner("⏳ Fetching player stats and context..."):
+        try:
             context = get_player_context(player_name, opponent)
-
-            st.subheader("📊 Season Averages")
-            season_avg_df = pd.DataFrame(context.get("season_avg", {})).T
-            st.dataframe(sanitize_df(season_avg_df), width="stretch")
-
-            st.subheader("📈 Last 10 Games Trend")
-            df = context.get("recent_games", pd.DataFrame())
-            if df.empty:
-                st.warning("No recent games found for this player.")
+            if not context:
+                st.error("Unable to load player data.")
             else:
-                safe_plot(df.copy(), player_name)
+                st.subheader("📊 Season Averages")
+                st.dataframe(pd.DataFrame(context["season_avg"]).T)
 
-            st.subheader("🛡️ Opponent Defensive Metrics")
-            opp_def = context.get("opponent_metrics", context.get("opponent_defense", {}))
-            if isinstance(opp_def, dict) and opp_def:
-                st.json(opp_def)
-            else:
-                st.info("No opponent defensive data available.")
+                # Plot last 10 games trend
+                st.subheader("📈 Recent Trends (Last 10 Games)")
+                df = context["recent_games"]
 
-# ------------------------------
-# 🧠 MODEL PREDICTOR
-# ------------------------------
-elif page == "🧠 Model Predictor":
-    st.title("🧠 Predictive Modeling Engine (XGBoost)")
-    player = st.text_input("Enter Player Name:", "Luka Doncic")
+                if not df.empty and "GAME_DATE" in df.columns:
+                    fig = px.line(
+                        df,
+                        x="GAME_DATE",
+                        y=["PTS", "REB", "AST", "PRA"],
+                        markers=True,
+                        title=f"{player_name} Performance Trends",
+                    )
+                    fig.update_layout(
+                        template="plotly_dark",
+                        plot_bgcolor="rgba(10,10,10,0.6)",
+                        paper_bgcolor="rgba(10,10,10,0.6)",
+                        font=dict(color="#f8f8f8"),
+                        xaxis_title="Game Date",
+                        yaxis_title="Stat Value",
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No recent game data available.")
+        except Exception as e:
+            st.error(f"Error fetching player data: {e}")
 
-    if st.button("Train & Predict Next Game"):
-        with st.spinner("Training and predicting..."):
-            try:
-                player_id = get_player_id(player)
-                df = build_feature_dataset(player_id)
+# ======================================================
+# 🤖 MODEL TRAINING + PREDICTION
+# ======================================================
+if st.button("Train & Predict Next Game"):
+    with st.spinner("🤖 Training AI model and generating predictions..."):
+        try:
+            player_id = get_player_id(player_name)
+            df = build_feature_dataset(player_id)
+            results = train_xgboost_models(df)
+            preds = predict_next_game(df)
 
-                if df.empty:
-                    st.warning("No player data available for training.")
-                    st.stop()
+            st.subheader("🔮 Next Game Predictions")
 
-                results = train_xgboost_models(df)
-                preds = predict_next_game(df)
-                eval_df = evaluate_model_performance(df)
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Points", f"{preds.get('PTS', 0):.1f}")
+            col2.metric("Rebounds", f"{preds.get('REB', 0):.1f}")
+            col3.metric("Assists", f"{preds.get('AST', 0):.1f}")
+            style_metric_cards(
+                background_color="#1c1c1e",
+                border_left_color="#f97316",
+                border_color="#facc15",
+                box_shadow=True,
+            )
 
-                st.subheader("📊 Model Training Summary")
-                st.dataframe(sanitize_df(pd.DataFrame(results).T), width="stretch")
+            st.subheader("📉 Model Evaluation Summary")
+            st.dataframe(pd.DataFrame(results).T, use_container_width=True)
 
-                st.subheader("🎯 Predicted Next Game Stats")
-                st.json(preds)
+        except Exception as e:
+            st.error(f"Error during model training or prediction: {e}")
 
-                st.subheader("📈 Model Evaluation")
-                st.dataframe(sanitize_df(eval_df), width="stretch")
-
-                fig = px.bar(
-                    x=list(preds.keys()),
-                    y=list(preds.values()),
-                    title=f"{player} - Predicted Next Game Output",
-                    template="plotly_dark"
-                )
-                st.plotly_chart(fig, width="stretch")
-
-            except Exception as e:
-                st.error(f"Error during model training or prediction: {e}")
-
-# ------------------------------
-# 📈 LIVE TRACKER (SIMPLE)
-# ------------------------------
-elif page == "📈 Live Tracker":
-    st.title("📈 Live Prediction Accuracy Tracker (Simplified)")
-    st.info("For full live tracking, integrate with /pages/3_Live_Tracker.py")
+# ======================================================
+# 🛰️ FOOTER
+# ======================================================
+st.markdown("---")
+st.markdown(
+    "<p style='text-align:center; color:#777;'>⚙️ Powered by XGBoost • NBA API • Streamlit • FutureCourt Design</p>",
+    unsafe_allow_html=True,
+)
