@@ -1,8 +1,8 @@
 streamlit
-pandas
-requests
-nba_api
 plotly
-altair
-scikit-learn
+streamlit-extras
+streamlit-lottie
 xgboost
+nba-api
+pandas
+numpy
