@@ -1,19 +1,15 @@
-# =============================================
-# 🏀 FUTURECOURT NBA AI DASHBOARD — Elite Build
-# =============================================
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import time
+
 from utils.data_loader import get_player_context, get_player_id
 from utils.feature_engineer import build_feature_dataset
 from utils.model_utils import train_xgboost_models, predict_next_game
 from utils.helpers import sanitize_dataframe_for_streamlit
-from nba_api.stats.static import teams
-import time
 
 # ======================================================
-# 🌌 FUTURECOURT THEME & PAGE SETTINGS
+# 🌌 FUTURECOURT DASHBOARD THEME & PAGE CONFIG
 # ======================================================
 st.set_page_config(
     page_title="FutureCourt NBA AI",
@@ -23,127 +19,135 @@ st.set_page_config(
 )
 
 st.markdown("""
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap');
-
-        .stApp {
-            background: radial-gradient(circle at top left, #091020, #000000 85%);
-            color: #FFFFFF;
-            font-family: 'Orbitron', sans-serif;
-        }
-        .metric-card {
-            background: rgba(255,255,255,0.08);
-            border-radius: 20px;
-            padding: 18px;
-            text-align: center;
-            box-shadow: 0 0 30px rgba(0,255,255,0.25);
-            backdrop-filter: blur(8px);
-            transition: transform 0.2s ease-in-out;
-        }
-        .metric-card:hover {
-            transform: scale(1.05);
-        }
-        .fade-in {
-            animation: fadeIn 1s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        h1, h2, h3 {
-            color: #00FFFF !important;
-            text-shadow: 0 0 12px #00FFFF;
-        }
-        .block-container { padding-top: 2rem; }
-    </style>
+<style>
+    .main {
+        background: radial-gradient(circle at 25% 25%, #0e0e1a, #000);
+        color: #fff;
+    }
+    .stMetric {
+        background: linear-gradient(145deg, #101020, #1e1e2f);
+        border-radius: 16px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 0 10px rgba(0,255,255,0.15);
+        transition: all 0.3s ease-in-out;
+    }
+    .stMetric:hover {
+        transform: scale(1.02);
+        box-shadow: 0 0 20px rgba(0,255,255,0.4);
+    }
+    .metric-label {
+        color: #aaa;
+        font-size: 0.9rem;
+    }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 600;
+        color: #00e0ff;
+    }
+    h1, h2, h3, h4 {
+        color: #00e0ff;
+        text-shadow: 0px 0px 6px rgba(0,255,255,0.3);
+    }
+</style>
 """, unsafe_allow_html=True)
 
 # ======================================================
-# 🚀 HEADER
+# 🧠 HEADER SECTION
 # ======================================================
-st.markdown("<h1 class='fade-in'>🏀 FutureCourt NBA AI Dashboard</h1>", unsafe_allow_html=True)
-st.caption("AI-Powered NBA Player Performance Predictor — built with XGBoost + NBA API")
+st.markdown("<h1 style='text-align:center;'>🏀 FutureCourt NBA AI Dashboard</h1>", unsafe_allow_html=True)
+st.caption("AI-powered predictive insights for NBA players — points, rebounds, assists, and beyond.")
 
 # ======================================================
 # 🎯 PLAYER INPUT
 # ======================================================
-player = st.text_input("Enter Player Name", value="Luka Doncic")
+player_name = st.text_input("Enter NBA Player Name:", placeholder="e.g. Luka Doncic, Jayson Tatum")
 
-if st.button("🚀 Generate Prediction"):
-    with st.spinner("Fetching player data and generating predictions..."):
+if player_name:
+    with st.spinner("Fetching player data..."):
         try:
-            player_id = get_player_id(player)
+            player_id = get_player_id(player_name)
             if not player_id:
-                st.error(f"Player '{player}' not found.")
-            else:
-                context = get_player_context(player_id)
-                if not context or "recent_games" not in context:
-                    st.warning("Unable to fetch recent games.")
-                else:
-                    df = context["recent_games"]
-                    df = build_feature_dataset(df)
-                    df = sanitize_dataframe_for_streamlit(df)
+                st.error("Player not found. Please check the name spelling.")
+                st.stop()
 
-                    models = train_xgboost_models(df)
-                    preds = predict_next_game(models, df)
+            context = get_player_context(player_id)
+            if not context or "recent_games" not in context:
+                st.error("Could not load player stats.")
+                st.stop()
 
-                    # ==============================================
-                    # 📸 Fetch Player & Team Images
-                    # ==============================================
-                    headshot_url = f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
-                    team_name = df.iloc[-1]["TEAM_ABBREVIATION"] if "TEAM_ABBREVIATION" in df.columns else None
+            df = context["recent_games"]
+            df = build_feature_dataset(df)
+            df = sanitize_dataframe_for_streamlit(df)
 
-                    team_logo_url = None
-                    if team_name:
-                        nba_teams = teams.get_teams()
-                        team_info = next((t for t in nba_teams if t["abbreviation"] == team_name), None)
-                        if team_info:
-                            team_logo_url = f"https://cdn.nba.com/logos/nba/{team_info['id']}/primary/L/logo.svg"
+            if df.empty:
+                st.warning("No recent game data available for this player.")
+                st.stop()
 
-                    col_logo, col_stats = st.columns([1, 3])
-                    with col_logo:
-                        if team_logo_url:
-                            st.image(team_logo_url, width=100)
-                        st.image(headshot_url, width=240, caption=player, use_container_width=False)
-
-                    with col_stats:
-                        st.markdown("### 🔮 Predicted Next Game Stats")
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.markdown(f"<div class='metric-card fade-in'><h3>PTS</h3><h2>{preds['PTS']:.1f}</h2></div>", unsafe_allow_html=True)
-                        col2.markdown(f"<div class='metric-card fade-in'><h3>REB</h3><h2>{preds['REB']:.1f}</h2></div>", unsafe_allow_html=True)
-                        col3.markdown(f"<div class='metric-card fade-in'><h3>AST</h3><h2>{preds['AST']:.1f}</h2></div>", unsafe_allow_html=True)
-                        col4.markdown(f"<div class='metric-card fade-in'><h3>PRA</h3><h2>{preds['PRA']:.1f}</h2></div>", unsafe_allow_html=True)
-
-                    # ==============================================
-                    # 📈 Performance Trend Chart
-                    # ==============================================
-                    st.markdown("### 📊 Recent Performance Trend")
-                    chart = px.line(
-                        df.tail(10),
-                        x="GAME_DATE",
-                        y=["PTS", "REB", "AST", "PRA"],
-                        title=f"{player}'s Recent Game Stats",
-                        markers=True
-                    )
-                    chart.update_layout(
-                        template="plotly_dark",
-                        title_font=dict(size=20, color="#00FFFF"),
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white"),
-                        legend=dict(bgcolor="rgba(0,0,0,0.2)")
-                    )
-                    st.plotly_chart(chart, use_container_width=True)
+            st.success(f"Data loaded for **{player_name}** — {len(df)} games found.")
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error fetching player data: {e}")
+            st.stop()
 
-# ======================================================
-# 🌙 FOOTER
-# ======================================================
-st.markdown("""
-<hr style='border:1px solid #00FFFF'>
-<div style='text-align:center; color:gray;'>
-🚀 FutureCourt AI © 2025 — Built by Patvath88 | Powered by Streamlit, XGBoost & NBA API
-</div>
-""", unsafe_allow_html=True)
+    # ======================================================
+    # 📊 PERFORMANCE TREND CHART
+    # ======================================================
+    st.subheader(f"📈 Recent Performance — {player_name}")
+    try:
+        chart_df = df.tail(10)
+        fig = px.line(
+            chart_df,
+            x="GAME_DATE",
+            y=["PTS", "REB", "AST", "PRA"],
+            title="Last 10 Games: Points / Rebounds / Assists / PRA",
+            markers=True
+        )
+        fig.update_layout(
+            template="plotly_dark",
+            height=400,
+            margin=dict(l=20, r=20, t=50, b=20)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Chart unavailable: {e}")
+
+    # ======================================================
+    # 🚀 PREDICTION SECTION
+    # ======================================================
+    if st.button("🚀 Train & Predict Next Game"):
+        with st.spinner("Training AI models and generating predictions..."):
+            try:
+                models = train_xgboost_models(df)
+
+                if not models:
+                    st.warning("Not enough data to train reliable models.")
+                    st.stop()
+
+                preds = predict_next_game(models, df)
+
+                st.success("✅ AI Predictions Ready!")
+
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Predicted Points", f"{preds['PTS']:.1f}")
+                col2.metric("Predicted Rebounds", f"{preds['REB']:.1f}")
+                col3.metric("Predicted Assists", f"{preds['AST']:.1f}")
+                col4.metric("Predicted PRA", f"{preds['PRA']:.1f}")
+
+                # Data readiness indicator
+                st.markdown("""
+                    <div style='margin-top:20px;'>
+                        <div style='background:#111; border-radius:10px; height:20px; width:100%; position:relative;'>
+                            <div style='background:linear-gradient(90deg, #00e0ff, #009fff);
+                                        width:{0}%; height:100%; border-radius:10px; box-shadow:0 0 10px #00e0ff;'>
+                            </div>
+                        </div>
+                        <p style='font-size:12px; color:#aaa; margin-top:4px;'>Data readiness: {0}% based on recent games</p>
+                    </div>
+                """.format(min(len(df)*10, 100)), unsafe_allow_html=True)
+
+            except Exception as e:
+                st.error(f"Error during prediction: {e}")
+
+else:
+    st.info("👆 Enter a player’s name above to start exploring predictions.")
