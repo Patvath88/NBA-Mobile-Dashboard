@@ -67,7 +67,27 @@ def train_xgboost_models(df):
     return models if models else None
 
 
-def predict_next_game(models, dataset):
-    last_row = dataset.iloc[[-1]]
-    preds = {stat: float(model.predict(last_row.drop(columns=["PTS", "REB", "AST", "PRA"], errors="ignore"))[0]) for stat, model in models.items()}
+def predict_next_game(models, df):
+    """
+    Generates predictions for the next game using trained XGBoost models.
+    Returns a dictionary of predictions or empty results if models invalid.
+    """
+    import pandas as pd
+
+    if not models or df is None or df.empty:
+        print("⚠️ Prediction skipped — no trained models or valid data.")
+        return {"PTS": 0, "REB": 0, "AST": 0, "PRA": 0}
+
+    last_row = df.tail(1)
+
+    preds = {}
+    for stat in ["PTS", "REB", "AST", "PRA"]:
+        model = models.get(stat)
+        if model is None:
+            preds[stat] = 0
+            continue
+
+        X_input = last_row.drop(columns=["PTS", "REB", "AST", "PRA"], errors="ignore")
+        preds[stat] = float(model.predict(X_input)[0])
+
     return preds
