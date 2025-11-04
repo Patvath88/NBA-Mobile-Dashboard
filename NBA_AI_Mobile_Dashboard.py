@@ -104,9 +104,11 @@ player_name = st.selectbox("Select Player", [""] + player_list)
 if player_name:
     pid = next(p["id"] for p in nba_players if p["full_name"] == player_name)
     # Try current and previous season to ensure data loads
+# Try current and previous season to ensure data loads
 df = get_games(pid, "2025-26")
 if df.empty:
     df = get_games(pid, "2024-25")
+
 
     else:
         stats = ["PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]
