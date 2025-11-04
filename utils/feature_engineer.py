@@ -34,12 +34,24 @@ def add_context_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def merge_opponent_defense(df: pd.DataFrame, season: str = "2024-25") -> pd.DataFrame:
+ddef merge_opponent_defense(df: pd.DataFrame, season: str = "2024-25"):
     """Merge opponent defensive averages into player game logs."""
     team_def = get_team_defensive_metrics(season)
-    df = df.merge(team_def, how="left", left_on="MATCHUP", right_on="team.full_name")
-    df.drop(columns=["team.full_name"], inplace=True, errors="ignore")
+
+    # Safely rename if needed
+    if "team.full_name" in team_def.columns:
+        team_def.rename(columns={"team.full_name": "Team"}, inplace=True)
+
+    # Extract opponent name substring from MATCHUP (e.g., "LAL vs BOS" -> "BOS")
+    df["Opp_Team"] = df["MATCHUP"].str.extract(r'vs\. (\w+)|@ (\w+)').bfill(axis=1).iloc[:, 0]
+    df["Opp_Team"] = df["Opp_Team"].str.strip()
+
+    # Perform merge on cleaned team names
+    df = df.merge(team_def, how="left", left_on="Opp_Team", right_on="Team")
+    df.drop(columns=["Team"], inplace=True, errors="ignore")
+
     return df
+
 
 
 def add_composite_metrics(df: pd.DataFrame) -> pd.DataFrame:
