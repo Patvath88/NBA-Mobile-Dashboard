@@ -11,7 +11,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ======================================================
-# 🌌 FUTURECOURT NBA AI DASHBOARD CONFIG
+# 🌌 FUTURECOURT NBA AI CONFIG
 # ======================================================
 st.set_page_config(
     page_title="FutureCourt NBA AI",
@@ -20,40 +20,59 @@ st.set_page_config(
 )
 
 # ======================================================
-# 🎨 STYLES
+# 🎨 CUSTOM STYLE
 # ======================================================
 st.markdown("""
 <style>
 body {
-    background: radial-gradient(circle at 20% 20%, #0d0f22, #05060e);
+    background: radial-gradient(circle at 25% 25%, #0b0e23, #02030a);
     color: #E0E0E0;
 }
+h1, h2, h3, h4 {
+    color: #00E0FF !important;
+}
 [data-testid="stMetricValue"] {
-    font-size: 34px !important;
-    font-weight: 700;
+    font-size: 36px !important;
+    font-weight: 800;
     color: #00E0FF !important;
 }
 .metric-card {
-    background: rgba(255,255,255,0.05);
+    background: linear-gradient(145deg, rgba(0,255,255,0.08), rgba(0,0,0,0.3));
+    border: 1px solid rgba(0,255,255,0.25);
     border-radius: 16px;
-    padding: 20px;
-    backdrop-filter: blur(15px);
+    padding: 24px;
+    text-align: center;
     transition: all 0.3s ease;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 0 20px rgba(0,255,255,0.1);
 }
 .metric-card:hover {
     transform: scale(1.03);
-    box-shadow: 0 0 20px rgba(0,255,255,0.3);
+    box-shadow: 0 0 25px rgba(0,255,255,0.4);
+}
+@keyframes shimmer {
+  0% {background-position: -1000px 0;}
+  100% {background-position: 1000px 0;}
+}
+.loading-shimmer {
+  width: 100%;
+  height: 16px;
+  border-radius: 8px;
+  background: linear-gradient(to right, #0d0f22 4%, #1f2335 25%, #0d0f22 36%);
+  background-size: 1000px 100%;
+  animation: shimmer 1.8s infinite linear;
+  margin: 10px 0;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ======================================================
-# 🔍 PLAYER INPUT
+# 🏀 FUTURECOURT MAIN DASHBOARD
 # ======================================================
 st.title("🏀 FutureCourt NBA AI")
-st.caption("AI-powered NBA player performance predictor — powered by GPT-5 + NBA API")
+st.caption("Futuristic AI-powered NBA player performance predictor — built with GPT-5 & NBA Stats API")
 
-player_name = st.text_input("Enter Player Name", "LeBron James")
+player_name = st.text_input("Enter Player Name", "Luka Doncic")
 
 if player_name:
     with st.spinner("Fetching player data..."):
@@ -70,7 +89,7 @@ if player_name:
             st.image(headshot_url, caption=player_name, use_container_width=True)
         with col2:
             st.markdown(f"""
-            <div style="font-size:22px; line-height:1.6;">
+            <div style="font-size:20px; line-height:1.6;">
             <b>Team:</b> {player_context.get("TEAM_NAME")}<br>
             <b>Position:</b> {player_context.get("POSITION")}<br>
             <b>Height / Weight:</b> {player_context.get("HEIGHT")} / {player_context.get("WEIGHT")} lbs<br>
@@ -78,10 +97,13 @@ if player_name:
             </div>
             """, unsafe_allow_html=True)
 
+        st.markdown("<hr style='border: 1px solid rgba(0,255,255,0.2);'>", unsafe_allow_html=True)
+
         # ======================================================
-        # ⚙️ BUILD FEATURES & TRAIN MODEL
+        # ⚙️ BUILD MODEL & MAKE PREDICTIONS
         # ======================================================
-        with st.spinner("Building AI model..."):
+        with st.spinner("Training model and generating predictions..."):
+            st.markdown('<div class="loading-shimmer"></div>' * 4, unsafe_allow_html=True)
             df = build_feature_dataset(player_id)
             df = sanitize_dataframe_for_streamlit(df)
 
@@ -93,14 +115,47 @@ if player_name:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.subheader("🔮 Predicted Next Game Stats")
 
+                    # Team logo (if available)
+                    team_name = player_context.get("TEAM_NAME", "")
+                    logo_url = f"https://cdn.ssref.net/req/202301041/tlogo/bbr/{team_name.lower().replace(' ', '')}.png" if team_name else ""
+
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("PTS", preds.get("PTS", 0))
-                    c2.metric("REB", preds.get("REB", 0))
-                    c3.metric("AST", preds.get("AST", 0))
-                    style_metric_cards(border_left_color="#00FFFF", border_color="#00FFFF")
+                    with c1:
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                                <img src="{logo_url}" width="40"><br>
+                                <h3>PTS</h3>
+                                <h2 style="color:#00E0FF;">{preds.get("PTS", 0)}</h2>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                    with c2:
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                                <img src="{logo_url}" width="40"><br>
+                                <h3>REB</h3>
+                                <h2 style="color:#00E0FF;">{preds.get("REB", 0)}</h2>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                    with c3:
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                                <img src="{logo_url}" width="40"><br>
+                                <h3>AST</h3>
+                                <h2 style="color:#00E0FF;">{preds.get("AST", 0)}</h2>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
                     # ======================================================
-                    # 📈 HISTORICAL TREND CHART
+                    # 📈 HISTORICAL PERFORMANCE
                     # ======================================================
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.subheader("📉 Recent Performance (Last 10 Games)")
@@ -110,13 +165,14 @@ if player_name:
                         x="GAME_DATE",
                         y=["PTS", "REB", "AST"],
                         markers=True,
-                        title=f"{player_name} - Last 10 Games",
+                        title=f"{player_name} — Last 10 Games",
                     )
                     fig.update_layout(
                         template="plotly_dark",
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="#00E0FF")
+                        font=dict(color="#00E0FF"),
+                        title_x=0.3,
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
