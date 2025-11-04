@@ -1,14 +1,16 @@
-#import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
-import requests
-from streamlit_extras.metric_cards import style_metric_cards
-from streamlit_lottie import st_lottie
-
 from utils.data_loader import get_player_context, get_player_id
 from utils.feature_engineer import build_feature_dataset
 from utils.model_utils import train_xgboost_models, predict_next_game
 from utils.helpers import sanitize_dataframe_for_streamlit
+from streamlit_extras.metric_cards import style_metric_cards
+from streamlit_lottie import st_lottie
+import requests
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # ======================================================
 # 🌌 FUTURECOURT DASHBOARD THEME & PAGE CONFIG
@@ -17,8 +19,9 @@ st.set_page_config(
     page_title="FutureCourt NBA AI",
     page_icon="🏀",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded"
 )
+
 
 # Inject sleek dark theme CSS
 st.markdown("""
