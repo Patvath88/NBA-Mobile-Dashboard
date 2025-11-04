@@ -3,29 +3,36 @@ import streamlit as st
 from utils.data_loader import get_team_defensive_metrics
 
 @st.cache_data(ttl=3600)
-def build_feature_dataset(df: pd.DataFrame, season: str = "2024-25"):
+def build_feature_dataset(df):
+    """
+    Safely build feature dataset for XGBoost model training and prediction.
+    Ensures DataFrame integrity and handles missing or malformed input.
+    """
+    import pandas as pd
+
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        print("⚠️ Warning: build_feature_dataset received an empty or invalid DataFrame.")
+        return pd.DataFrame()  # Return an empty DataFrame to prevent crashes
+
     df = df.copy()
 
-    # Rolling averages for recent form
-    for col in ["PTS", "REB", "AST", "STL", "BLK", "TOV"]:
-        df[f"{col}_roll5"] = df[col].rolling(5, min_periods=1).mean()
+    # Add feature engineering safely
+    try:
+        if "PTS" in df.columns and "REB" in df.columns and "AST" in df.columns:
+            df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
 
-    df["FG_PCT_roll5"] = df["FG_PCT"].rolling(5, min_periods=1).mean()
-    df["FG3M_roll5"] = df["FG3M"].rolling(5, min_periods=1).mean()
-    df["USG"] = (df["FGA"] + 0.44 * df["FTA"] + df["TOV"]) / df["MIN"]
+        # Rolling averages (smooth trends)
+        for col in ["PTS", "REB", "AST"]:
+            if col in df.columns:
+                df[f"{col}_roll5"] = df[col].rolling(5, min_periods=1).mean()
 
-    df["EFF"] = (df["PTS"] + df["REB"] + df["AST"] + df["STL"] + df["BLK"] -
-                 ((df["FGA"] - df["FGM"]) + (df["FTA"] - df["FTM"]) + df["TOV"]))
+        # Basic efficiency
+        df["EFF"] = df.get("PTS", 0) + df.get("REB", 0) + df.get("AST", 0) \
+                    + df.get("STL", 0) + df.get("BLK", 0) - df.get("TOV", 0)
 
-    # Merge opponent defensive data
-    team_def = get_team_defensive_metrics(season)
-    if not team_def.empty and "MATCHUP" in df.columns:
-        df["Opponent"] = df["MATCHUP"].apply(lambda x: x.split(" ")[-1])
-        df = df.merge(team_def, left_on="Opponent", right_on="TEAM_NAME", how="left")
-        df.rename(columns={"DEF_RATING": "Opp_Def_Rtg", "PACE": "Opp_Pace"}, inplace=True)
-    else:
-        df["Opp_Def_Rtg"] = 110
-        df["Opp_Pace"] = 99
+        df = df.fillna(0)
+        return df
 
-    df = df.fillna(0)
-    return df
+    except Exception as e:
+        print(f"⚠️ Feature engineering failed: {e}")
+        return df.fillna(0)
