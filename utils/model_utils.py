@@ -1,113 +1,74 @@
-import streamlit as st
-import xgboost as xgb
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-
-# ------------------------------------------------------
-# ⚙️ Training and Caching
-# ------------------------------------------------------
-@st.cache_resource(ttl=604800)
-def load_or_train_cached_model(df: pd.DataFrame):
-    """Train lightweight models weekly and cache them."""
-    if df is None or df.empty:
-        return {}
-
-    models = {}
-    X = df.select_dtypes(include=[np.number])
-    targets = [t for t in ["PTS", "REB", "AST"] if t in X.columns]
-    X = X.drop(columns=targets, errors="ignore")
-
-    for target in targets:
-        y = df[target]
-        if len(X) < 10:
-            continue
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-        model = xgb.XGBRegressor(
-            n_estimators=150,
-            learning_rate=0.1,
-            max_depth=5,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            tree_method="hist",
-            random_state=42,
-            verbosity=0
-        )
-        model.fit(X_train, y_train)
-        models[target] = model
-    return models
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import streamlit as st
 
 
-# ------------------------------------------------------
-# 🧠 Model Training
-# ------------------------------------------------------
-@st.cache_data(ttl=1800)
-def train_xgboost_models(df: pd.DataFrame):
-    """Evaluate cached mini-model performance."""
-    models = load_or_train_cached_model(df)
-    if not models:
-        st.warning("No model trained (insufficient data).")
-        return {}
-
-    results = {}
-    for target, model in models.items():
-        X = df.select_dtypes(include=[np.number]).drop(columns=[target], errors="ignore")
-        y = df[target]
-        preds = model.predict(X)
-        rmse = mean_squared_error(y, preds, squared=False)
-        mae = mean_absolute_error(y, preds)
-        results[target] = {"RMSE": round(rmse, 2), "MAE": round(mae, 2), "MeanPred": float(np.mean(preds))}
-    return results
-
-
-# ------------------------------------------------------
-# 🎯 Prediction
-# ------------------------------------------------------
-def predict_next_game(df, models=None):
-    """
-    Predict next game stats with feature alignment to prevent XGBoost mismatch errors.
-    """
-    import numpy as np
-    import streamlit as st
-
+def train_xgboost_models(df):
+    """Train XGBoost models for PTS, REB, AST."""
     try:
-        if df is None or df.empty:
-            st.error("No valid data for prediction.")
+        target_stats = ["PTS", "REB", "AST"]
+        feature_cols = [c for c in df.columns if c not in ["GAME_DATE", "PTS", "REB", "AST", "MATCHUP", "WL"]]
+
+        models = {}
+        results = {}
+
+        for stat in target_stats:
+            X = df[feature_cols]
+            y = df[stat]
+
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+            model = xgb.XGBRegressor(
+                n_estimators=100,
+                learning_rate=0.1,
+                max_depth=5,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+            )
+            model.fit(X_train, y_train)
+
+            preds = model.predict(X_test)
+            results[stat] = {
+                "RMSE": np.sqrt(mean_squared_error(y_test, preds)),
+                "MAE": mean_absolute_error(y_test, preds),
+                "R²": r2_score(y_test, preds),
+            }
+            models[stat] = model
+
+        return results | {"models": models}
+
+    except Exception as e:
+        st.error(f"Error during model training: {e}")
+        return {}
+
+
+def predict_next_game(df, models=None):
+    """Predict next game stats with feature alignment."""
+    try:
+        if not models or "models" not in models:
+            st.error("No trained models available for prediction.")
             return {}
 
-        # Drop non-numeric columns if any
-        df_numeric = df.select_dtypes(include=[np.number]).copy()
-        if df_numeric.empty:
-            st.error("No numeric features available for prediction.")
-            return {}
+        models = models["models"]
 
-        # Use only last game for context
-        latest_features = df_numeric.tail(1).copy()
-
-        # Align feature columns with trained model
-        if models and "PTS" in models:
-            expected_features = models["PTS"].get_booster().feature_names
-            if expected_features:
-                available_features = latest_features.columns.tolist()
-                missing_cols = [col for col in expected_features if col not in available_features]
-                extra_cols = [col for col in available_features if col not in expected_features]
-
-                # Add missing columns with default 0
-                for col in missing_cols:
-                    latest_features[col] = 0
-
-                # Drop extra columns not used during training
-                latest_features = latest_features[[c for c in expected_features if c in latest_features.columns]]
+        # Use last available record
+        latest_features = df.select_dtypes(include=[np.number]).tail(1).copy()
 
         preds = {}
         for stat, model in models.items():
-            pred_value = model.predict(latest_features)[0]
-            preds[stat] = round(float(pred_value), 1)
+            expected_features = model.get_booster().feature_names
+            missing_cols = [c for c in expected_features if c not in latest_features.columns]
+            for c in missing_cols:
+                latest_features[c] = 0
+            latest_features = latest_features[expected_features]
+            pred_val = float(model.predict(latest_features)[0])
+            preds[stat] = round(pred_val, 1)
 
         return preds
-
     except Exception as e:
-        st.error(f"Error during prediction alignment: {e}")
+        st.error(f"Error during prediction: {e}")
         return {}
-
