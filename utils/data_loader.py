@@ -5,16 +5,15 @@ from nba_api.stats.endpoints import playergamelog, teamgamelog
 from nba_api.stats.static import players, teams
 from difflib import get_close_matches
 from datetime import datetime
-from pathlib import Path
 import time
 
 # --------------------------
-# 🔹 PLAYER DATA FETCHING
+# 🔹 PLAYER FUNCTIONS
 # --------------------------
 
 @st.cache_data(ttl=3600)
 def get_player_id(player_name: str):
-    """Return the NBA API player ID with fuzzy matching for similar names."""
+    """Return the NBA API player ID with fuzzy matching."""
     all_players = players.get_players()
     names = [p["full_name"] for p in all_players]
 
@@ -23,7 +22,7 @@ def get_player_id(player_name: str):
     if exact:
         return exact["id"]
 
-    # Fuzzy match for accents or minor typos
+    # Fuzzy match
     close = get_close_matches(player_name, names, n=1, cutoff=0.6)
     if close:
         match = next(p for p in all_players if p["full_name"] == close[0])
@@ -58,69 +57,90 @@ def get_season_averages(player_id: int, season: str = "2024-25"):
 
 
 # --------------------------
-# 🔹 TEAM DEFENSIVE METRICS
+# 🔹 TEAM METRICS (NBA API)
 # --------------------------
 
 @st.cache_data(ttl=3600)
 def get_team_defensive_metrics(season: str = "2024-25"):
     """
-    Derive opponent defensive metrics from team game logs using nba_api.
-    Opponent averages = average points, rebounds, assists allowed per game.
+    Build team defensive and pace metrics using NBA team game logs.
+    Derives Opp_PPG, Opp_RPG, Opp_APG, Pace, and DefRtg.
     """
-    try:
-        all_teams = teams.get_teams()
-        team_defense = []
+    all_teams = teams.get_teams()
+    team_stats = []
 
-        for t in all_teams:
-            team_id = t["id"]
-            name = t["full_name"]
+    for t in all_teams:
+        team_id = t["id"]
+        team_name = t["full_name"]
 
-            # Avoid rate limit: nba_api can throttle
-            time.sleep(0.5)
+        # Avoid hitting NBA API rate limits
+        time.sleep(0.4)
 
-            gamelog = teamgamelog.TeamGameLog(team_id=team_id, season=season)
-            df = gamelog.get_data_frames()[0]
-            df["PTS_ALLOWED"] = df["PTS"].shift(-1)  # Simplistic: next opponent
-            team_defense.append({
-                "Team": name,
-                "Opp_PPG": df["PTS_ALLOWED"].mean(),
-                "Opp_RPG": df["REB"].mean(),
-                "Opp_APG": df["AST"].mean(),
+        try:
+            logs = teamgamelog.TeamGameLog(team_id=team_id, season=season)
+            df = logs.get_data_frames()[0]
+
+            if df.empty:
+                continue
+
+            # Convert numeric columns
+            df["PTS"] = pd.to_numeric(df["PTS"], errors="coerce")
+            df["REB"] = pd.to_numeric(df["REB"], errors="coerce")
+            df["AST"] = pd.to_numeric(df["AST"], errors="coerce")
+            df["TOV"] = pd.to_numeric(df["TOV"], errors="coerce")
+            df["FGA"] = pd.to_numeric(df["FGA"], errors="coerce")
+            df["FTA"] = pd.to_numeric(df["FTA"], errors="coerce")
+
+            # Estimate possessions (pace formula)
+            df["Possessions"] = df["FGA"] + 0.44 * df["FTA"] - df["OREB"] + df["TOV"]
+
+            opp_ppg = df["PTS"].mean()
+            opp_rpg = df["REB"].mean()
+            opp_apg = df["AST"].mean()
+            pace = df["Possessions"].mean()
+            def_rtg = (df["PTS"].mean() / (df["Possessions"].mean() / 100)) if df["Possessions"].mean() > 0 else None
+
+            team_stats.append({
+                "Team": team_name,
+                "Opp_PPG": round(opp_ppg, 1),
+                "Opp_RPG": round(opp_rpg, 1),
+                "Opp_APG": round(opp_apg, 1),
+                "Pace": round(pace, 1),
+                "DefRtg": round(def_rtg, 1) if def_rtg else None
             })
 
-        defense_df = pd.DataFrame(team_defense)
-        return defense_df.round(1)
+        except Exception as e:
+            st.warning(f"Could not fetch {team_name} metrics: {e}")
 
-    except Exception as e:
-        st.error(f"Error fetching team defensive metrics: {e}")
-        return pd.DataFrame(columns=["Team", "Opp_PPG", "Opp_RPG", "Opp_APG"])
+    df_defense = pd.DataFrame(team_stats)
+    return df_defense
 
 
 # --------------------------
-# 🔹 TEAM + PLAYER CONTEXT
+# 🔹 CONTEXT BUILDER
 # --------------------------
 
 @st.cache_data(ttl=300)
 def get_player_context(player_name: str, opponent_team: str, season: str = "2024-25"):
-    """Combine player recent stats and opponent defensive averages."""
+    """Combine player and opponent team context with pace and defensive rating."""
     try:
         player_id = get_player_id(player_name)
         gamelog_df = get_player_gamelog(player_id, season)
-        team_def_df = get_team_defensive_metrics(season)
+        team_metrics_df = get_team_defensive_metrics(season)
 
-        # Match opponent (fuzzy)
-        opp = get_close_matches(opponent_team, team_def_df["Team"].tolist(), n=1, cutoff=0.6)
-        opponent_df = team_def_df[team_def_df["Team"] == opp[0]] if opp else pd.DataFrame()
+        # Fuzzy match opponent
+        opp_match = get_close_matches(opponent_team, team_metrics_df["Team"].tolist(), n=1, cutoff=0.6)
+        opponent_df = team_metrics_df[team_metrics_df["Team"] == opp_match[0]] if opp_match else pd.DataFrame()
 
         context = {
             "player": player_name,
             "season_avg": get_season_averages(player_id, season).to_dict() if not gamelog_df.empty else {},
             "recent_games": gamelog_df.tail(10) if not gamelog_df.empty else pd.DataFrame(),
-            "opponent_defense": opponent_df.to_dict(orient="records")[0] if not opponent_df.empty else {},
+            "opponent_metrics": opponent_df.to_dict(orient="records")[0] if not opponent_df.empty else {}
         }
 
         return context
 
     except Exception as e:
         st.error(f"Error building player context: {e}")
-        return {"player": player_name, "season_avg": {}, "recent_games": pd.DataFrame(), "opponent_defense": {}}
+        return {"player": player_name, "season_avg": {}, "recent_games": pd.DataFrame(), "opponent_metrics": {}}
