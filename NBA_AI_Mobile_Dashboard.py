@@ -4,6 +4,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import subprocess, sys
+# Force install plotly if missing
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "plotly"])
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from nba_api.stats.static import players
