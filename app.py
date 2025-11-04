@@ -1,10 +1,13 @@
 # app.py
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from utils.data_loader import get_player_context, get_player_id
 from utils.feature_engineer import build_feature_dataset
 from utils.model_utils import train_xgboost_models, predict_next_game, evaluate_model_performance
-import plotly.express as px
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # ------------------------------
 # ⚙️ PAGE CONFIG
@@ -17,7 +20,7 @@ st.set_page_config(
 )
 
 # ------------------------------
-# 🎨 CUSTOM CSS (Dark Mode Theme)
+# 🎨 CUSTOM DARK THEME CSS
 # ------------------------------
 st.markdown("""
     <style>
@@ -40,13 +43,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------
-# 🔹 SIDEBAR NAVIGATION
+# 🧹 HELPER FUNCTION
+# ------------------------------
+def sanitize_df(df: pd.DataFrame):
+    """Ensure DataFrame is Arrow-safe for Streamlit."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    for c in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[c]):
+            df[c] = df[c].astype(str)
+        if df[c].dtype == "object":
+            df[c] = df[c].apply(lambda x: str(x) if not isinstance(x, (int, float)) else x)
+    return df
+
+# ------------------------------
+# 🧭 SIDEBAR NAVIGATION
 # ------------------------------
 page = st.sidebar.radio(
     "📊 Navigate",
     ["🏀 Player Viewer", "🧠 Model Predictor", "📈 Live Tracker"]
 )
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Powered by 🧠 Code GPT + XGBoost")
 
@@ -63,117 +80,92 @@ if page == "🏀 Player Viewer":
         with st.spinner("Loading data..."):
             context = get_player_context(player_name, opponent)
 
+            # --- Handle Missing Keys ---
+            if "recent_games" not in context or context["recent_games"] is None:
+                st.warning("No recent game data found for this player.")
+                st.stop()
+
             st.subheader("📊 Season Averages")
-            st.dataframe(pd.DataFrame(context["season_avg"]).T)
+            season_avg_df = pd.DataFrame(context.get("season_avg", {})).T
+            st.dataframe(sanitize_df(season_avg_df), use_container_width=True)
 
             st.subheader("📈 Last 10 Games Trend")
-            df = context["recent_games"]
+            df = context["recent_games"].copy()
 
-            fig = px.line(
-                df,
-                x="GAME_DATE",
-                y=["PTS", "REB", "AST", "PRA"],
-                title=f"{player_name} - Recent Game Trends",
-                template="plotly_dark",
-                markers=True
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if df.empty:
+                st.warning("No recent game logs available.")
+            else:
+                # --- Ensure columns exist ---
+                if "GAME_DATE" not in df.columns:
+                    st.warning("Game date information missing.")
+                else:
+                    if "PRA" not in df.columns and all(c in df.columns for c in ["PTS", "REB", "AST"]):
+                        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
+                    for col in ["PTS", "REB", "AST", "PRA"]:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+                    fig = px.line(
+                        df,
+                        x="GAME_DATE",
+                        y=[col for col in ["PTS", "REB", "AST", "PRA"] if col in df.columns],
+                        title=f"{player_name} - Recent Game Trends",
+                        template="plotly_dark",
+                        markers=True
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("🛡️ Opponent Defensive Metrics")
-            st.json(context["opponent_defense"])
+            opp_def = context.get("opponent_metrics", context.get("opponent_defense", {}))
+            if isinstance(opp_def, dict) and opp_def:
+                st.json(opp_def)
+            else:
+                st.info("No opponent defensive data found.")
 
 # ------------------------------
 # 🧠 MODEL PREDICTOR
 # ------------------------------
 elif page == "🧠 Model Predictor":
     st.title("🧠 Predictive Modeling Engine (XGBoost)")
-
     player = st.text_input("Enter Player Name:", "Luka Doncic")
 
     if st.button("Train & Predict Next Game"):
         with st.spinner("Training and predicting..."):
-            player_id = get_player_id(player)
-            df = build_feature_dataset(player_id)
+            try:
+                player_id = get_player_id(player)
+                df = build_feature_dataset(player_id)
 
-            results = train_xgboost_models(df)
-            preds = predict_next_game(df)
-            eval_df = evaluate_model_performance(df)
+                if df.empty:
+                    st.warning("No player data available for training.")
+                    st.stop()
 
-            st.subheader("📊 Model Training Summary")
-            st.dataframe(pd.DataFrame(results).T)
+                results = train_xgboost_models(df)
+                preds = predict_next_game(df)
+                eval_df = evaluate_model_performance(df)
 
-            st.subheader("🎯 Predicted Next Game Stats")
-            st.json(preds)
+                st.subheader("📊 Model Training Summary")
+                st.dataframe(sanitize_df(pd.DataFrame(results).T), use_container_width=True)
 
-            st.subheader("📈 Model Evaluation")
-            st.dataframe(eval_df)
+                st.subheader("🎯 Predicted Next Game Stats")
+                st.json(preds)
 
-            # Visualization of predicted performance
-            fig = px.bar(
-                x=list(preds.keys()),
-                y=list(preds.values()),
-                color=list(preds.keys()),
-                title=f"{player} - Predicted Next Game Output",
-                template="plotly_dark"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                st.subheader("📈 Model Evaluation")
+                st.dataframe(sanitize_df(eval_df), use_container_width=True)
+
+                fig = px.bar(
+                    x=list(preds.keys()),
+                    y=list(preds.values()),
+                    title=f"{player} - Predicted Next Game Output",
+                    template="plotly_dark"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error during model training or prediction: {e}")
 
 # ------------------------------
-# 📈 LIVE TRACKER (AUTO REFRESH)
+# 📈 LIVE TRACKER (SIMPLE)
 # ------------------------------
 elif page == "📈 Live Tracker":
-    st.title("📈 Live Prediction Accuracy Tracker (30s Auto Refresh)")
-
-    st.markdown(
-        "Auto-refreshing every **30 seconds** to compare predicted vs actual performance."
-    )
-
-    player_name = st.text_input("Enter Player Name:", "Jayson Tatum")
-
-    if player_name:
-        import requests
-        from utils.model_utils import predict_next_game
-        from utils.feature_engineer import build_feature_dataset
-
-        player_id = get_player_id(player_name)
-        feature_df = build_feature_dataset(player_id)
-        predicted = predict_next_game(feature_df)
-
-        st_autorefresh = st.autorefresh(interval=30 * 1000, key="refresh")
-
-        live_url = f"https://www.balldontlie.io/api/v1/stats?player_ids[]={player_id}"
-        res = requests.get(live_url).json()
-
-        if len(res["data"]) == 0:
-            st.warning("No live game data available.")
-        else:
-            live_game = res["data"][-1]["stats"]
-            actual = {
-                "PTS": live_game.get("pts", 0),
-                "REB": live_game.get("reb", 0),
-                "AST": live_game.get("ast", 0),
-                "STL": live_game.get("stl", 0),
-                "BLK": live_game.get("blk", 0),
-                "TOV": live_game.get("turnover", 0),
-                "FG3M": live_game.get("fg3m", 0)
-            }
-            actual["PRA"] = actual["PTS"] + actual["REB"] + actual["AST"]
-
-            df_compare = pd.DataFrame([
-                {"Stat": k, "Predicted": predicted.get(k, 0), "Actual": actual.get(k, 0)}
-                for k in predicted.keys()
-            ])
-            df_compare["Error"] = abs(df_compare["Predicted"] - df_compare["Actual"])
-            df_compare["% Error"] = (df_compare["Error"] / (df_compare["Actual"] + 1e-6) * 100).round(1)
-
-            st.dataframe(df_compare, use_container_width=True)
-
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=df_compare["Stat"], y=df_compare["Predicted"], name="Predicted"))
-            fig.add_trace(go.Bar(x=df_compare["Stat"], y=df_compare["Actual"], name="Actual"))
-            fig.update_layout(barmode="group", template="plotly_dark", title="Predicted vs Actual (Live)")
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.metric("MAE", df_compare["Error"].mean().round(2))
-            st.metric("Average % Error", f"{df_compare['% Error'].mean().round(1)}%")
+    st.title("📈 Live Prediction Accuracy Tracker (Simplified)")
+    st.info("For full live tracking, integrate with /pages/3_Live_Tracker.py")
