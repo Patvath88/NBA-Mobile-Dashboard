@@ -1,119 +1,108 @@
 # utils/model_utils.py
-import pandas as pd
 import numpy as np
-import joblib
-from xgboost import XGBRegressor
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from pathlib import Path
+import pandas as pd
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import streamlit as st
 
 # ------------------------------
-# 🔹 CONFIG
+# 🧠 TRAIN MODEL
 # ------------------------------
-MODEL_DIR = Path("models")
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-TARGETS = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG3M", "PRA"]
-
-
-# ------------------------------
-# 🔹 MODEL TRAINING
-# ------------------------------
-
-def train_xgboost_models(feature_df: pd.DataFrame):
-    """
-    Train an individual XGBoost regressor for each stat category.
-    Save models in /models/.
-    """
+def train_xgboost_models(df: pd.DataFrame):
+    """Train an XGBoost model for each target stat."""
+    targets = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG3M", "PRA"]
     results = {}
 
-    # Independent features: all numeric except target stats
-    X = feature_df.drop(columns=TARGETS, errors="ignore").select_dtypes(include=np.number)
+    try:
+        for target in targets:
+            if target not in df.columns:
+                continue
 
-    for target in TARGETS:
-        if target not in feature_df.columns:
-            continue
+            X = df.drop(columns=[target], errors="ignore")
+            y = df[target]
 
-        y = feature_df[target]
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
+            if len(X) < 5:
+                continue  # Not enough games
 
-        model = XGBRegressor(
-            n_estimators=300,
-            learning_rate=0.05,
-            max_depth=5,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42,
-            n_jobs=-1,
-        )
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, shuffle=False
+            )
 
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+            model = xgb.XGBRegressor(
+                n_estimators=250,
+                learning_rate=0.08,
+                max_depth=6,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                n_jobs=-1,
+            )
+            model.fit(X_train, y_train)
 
-        mae = mean_absolute_error(y_test, preds)
-        rmse = mean_squared_error(y_test, preds, squared=False)
-        r2 = r2_score(y_test, preds)
+            preds = model.predict(X_test)
+            rmse = np.sqrt(mean_squared_error(y_test, preds))
+            mae = mean_absolute_error(y_test, preds)
+            r2 = r2_score(y_test, preds)
 
-        results[target] = {"MAE": mae, "RMSE": rmse, "R2": r2}
+            results[target] = {
+                "RMSE": round(rmse, 2),
+                "MAE": round(mae, 2),
+                "R2": round(r2, 3),
+                "Games Trained": len(X_train),
+            }
 
-        # Save model
-        model_path = MODEL_DIR / f"xgb_{target.lower()}.pkl"
-        joblib.dump(model, model_path)
+        return results
 
-    return results
+    except Exception as e:
+        st.error(f"Error training XGBoost models: {e}")
+        return {}
 
 
 # ------------------------------
-# 🔹 PREDICTION
+# 🎯 PREDICT NEXT GAME
 # ------------------------------
-
-def predict_next_game(feature_df: pd.DataFrame):
-    """
-    Predict next game stats using saved models.
-    Takes the latest game row as input.
-    """
-    latest_row = feature_df.tail(1).select_dtypes(include=np.number)
+def predict_next_game(df: pd.DataFrame):
+    """Predict next game stats using the last available data row."""
     preds = {}
-
-    for target in TARGETS:
-        model_path = MODEL_DIR / f"xgb_{target.lower()}.pkl"
-        if not model_path.exists():
-            preds[target] = np.nan
-            continue
-
-        model = joblib.load(model_path)
-        pred_value = float(model.predict(latest_row)[0])
-        preds[target] = round(pred_value, 1)
-
-    preds["PRA"] = round(preds.get("PTS", 0) + preds.get("REB", 0) + preds.get("AST", 0), 1)
-    return preds
+    try:
+        last_row = df.iloc[-1:].drop(columns=["PRA"], errors="ignore")
+        for target in ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG3M"]:
+            model = xgb.XGBRegressor()
+            model.fit(df.drop(columns=[target], errors="ignore"), df[target])
+            preds[target] = float(model.predict(last_row)[0])
+        preds["PRA"] = preds["PTS"] + preds["REB"] + preds["AST"]
+        return preds
+    except Exception as e:
+        st.error(f"Error predicting next game: {e}")
+        return {}
 
 
 # ------------------------------
-# 🔹 EVALUATION (For Dashboard)
+# 📈 EVALUATE MODEL PERFORMANCE
 # ------------------------------
+def evaluate_model_performance(df: pd.DataFrame):
+    """Compute RMSE, MAE, and R² for all major stats."""
+    metrics = []
+    try:
+        for stat in ["PTS", "REB", "AST", "PRA"]:
+            if stat not in df.columns:
+                continue
+            y = df[stat]
+            y_pred = df[stat].rolling(1).mean()  # simple baseline
+            mse = mean_squared_error(y[1:], y_pred[1:])
+            rmse = float(np.sqrt(mse))
+            mae = float(mean_absolute_error(y[1:], y_pred[1:]))
+            r2 = float(r2_score(y[1:], y_pred[1:]))
+            metrics.append({
+                "Stat": stat,
+                "RMSE": round(rmse, 2),
+                "MAE": round(mae, 2),
+                "R2": round(r2, 3)
+            })
 
-def evaluate_model_performance(feature_df: pd.DataFrame):
-    """Compute cross-validated performance summary for dashboard display."""
-    X = feature_df.drop(columns=TARGETS, errors="ignore").select_dtypes(include=np.number)
-    eval_summary = {}
+        return pd.DataFrame(metrics)
 
-    for target in TARGETS:
-        if target not in feature_df.columns:
-            continue
-        y = feature_df[target]
-        model_path = MODEL_DIR / f"xgb_{target.lower()}.pkl"
-        if not model_path.exists():
-            continue
-
-        model = joblib.load(model_path)
-        preds = model.predict(X)
-        eval_summary[target] = {
-            "MAE": round(mean_absolute_error(y, preds), 2),
-            "RMSE": round(mean_squared_error(y, preds, squared=False), 2),
-            "R2": round(r2_score(y, preds), 2)
-        }
-
-    return pd.DataFrame(eval_summary).T
+    except Exception as e:
+        st.error(f"Error evaluating model performance: {e}")
+        return pd.DataFrame()
