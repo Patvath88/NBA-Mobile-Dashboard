@@ -43,7 +43,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------
-# 🧹 HELPER FUNCTION
+# 🧹 HELPER FUNCTIONS
 # ------------------------------
 def sanitize_df(df: pd.DataFrame):
     """Ensure DataFrame is Arrow-safe for Streamlit."""
@@ -56,6 +56,32 @@ def sanitize_df(df: pd.DataFrame):
         if df[c].dtype == "object":
             df[c] = df[c].apply(lambda x: str(x) if not isinstance(x, (int, float)) else x)
     return df
+
+
+def safe_plot(df, player_name):
+    """Safe plot function for player stat trends."""
+    if "GAME_DATE" not in df.columns:
+        st.warning("No GAME_DATE column found — unable to plot trends.")
+        return
+    if not all(c in df.columns for c in ["PTS", "REB", "AST"]):
+        st.warning("Missing stat columns for plotting.")
+        return
+
+    # Create PRA column
+    df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
+    for col in ["PTS", "REB", "AST", "PRA"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    fig = px.line(
+        df,
+        x="GAME_DATE",
+        y=["PTS", "REB", "AST", "PRA"],
+        title=f"{player_name} - Recent Game Trends",
+        template="plotly_dark",
+        markers=True
+    )
+    st.plotly_chart(fig, width="stretch")
+
 
 # ------------------------------
 # 🧭 SIDEBAR NAVIGATION
@@ -80,47 +106,23 @@ if page == "🏀 Player Viewer":
         with st.spinner("Loading data..."):
             context = get_player_context(player_name, opponent)
 
-            # --- Handle Missing Keys ---
-            if "recent_games" not in context or context["recent_games"] is None:
-                st.warning("No recent game data found for this player.")
-                st.stop()
-
             st.subheader("📊 Season Averages")
             season_avg_df = pd.DataFrame(context.get("season_avg", {})).T
-            st.dataframe(sanitize_df(season_avg_df), use_container_width=True)
+            st.dataframe(sanitize_df(season_avg_df), width="stretch")
 
             st.subheader("📈 Last 10 Games Trend")
-            df = context["recent_games"].copy()
-
+            df = context.get("recent_games", pd.DataFrame())
             if df.empty:
-                st.warning("No recent game logs available.")
+                st.warning("No recent games found for this player.")
             else:
-                # --- Ensure columns exist ---
-                if "GAME_DATE" not in df.columns:
-                    st.warning("Game date information missing.")
-                else:
-                    if "PRA" not in df.columns and all(c in df.columns for c in ["PTS", "REB", "AST"]):
-                        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
-                    for col in ["PTS", "REB", "AST", "PRA"]:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-                    fig = px.line(
-                        df,
-                        x="GAME_DATE",
-                        y=[col for col in ["PTS", "REB", "AST", "PRA"] if col in df.columns],
-                        title=f"{player_name} - Recent Game Trends",
-                        template="plotly_dark",
-                        markers=True
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                safe_plot(df.copy(), player_name)
 
             st.subheader("🛡️ Opponent Defensive Metrics")
             opp_def = context.get("opponent_metrics", context.get("opponent_defense", {}))
             if isinstance(opp_def, dict) and opp_def:
                 st.json(opp_def)
             else:
-                st.info("No opponent defensive data found.")
+                st.info("No opponent defensive data available.")
 
 # ------------------------------
 # 🧠 MODEL PREDICTOR
@@ -144,13 +146,13 @@ elif page == "🧠 Model Predictor":
                 eval_df = evaluate_model_performance(df)
 
                 st.subheader("📊 Model Training Summary")
-                st.dataframe(sanitize_df(pd.DataFrame(results).T), use_container_width=True)
+                st.dataframe(sanitize_df(pd.DataFrame(results).T), width="stretch")
 
                 st.subheader("🎯 Predicted Next Game Stats")
                 st.json(preds)
 
                 st.subheader("📈 Model Evaluation")
-                st.dataframe(sanitize_df(eval_df), use_container_width=True)
+                st.dataframe(sanitize_df(eval_df), width="stretch")
 
                 fig = px.bar(
                     x=list(preds.keys()),
@@ -158,7 +160,7 @@ elif page == "🧠 Model Predictor":
                     title=f"{player} - Predicted Next Game Output",
                     template="plotly_dark"
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             except Exception as e:
                 st.error(f"Error during model training or prediction: {e}")
