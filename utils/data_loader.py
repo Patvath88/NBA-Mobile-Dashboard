@@ -47,3 +47,32 @@ def get_player_context(player_name: str):
     except Exception as e:
         st.error(f"Error fetching player context: {e}")
         return {}
+
+
+def get_player_gamelog(player_id: int, season="2024-25"):
+    """Fetches player game logs."""
+    try:
+        url = f"https://stats.nba.com/stats/playergamelog?PlayerID={player_id}&Season={season}&SeasonType=Regular+Season"
+        resp = requests.get(url, headers=HEADERS)
+        result = resp.json()["resultSets"][0]
+        df = pd.DataFrame(result["rowSet"], columns=result["headers"])
+        return df
+    except Exception as e:
+        st.error(f"Error fetching player gamelog: {e}")
+        return pd.DataFrame()
+
+
+def get_team_defensive_metrics():
+    """Fetches basic team defensive stats (for opponent merge)."""
+    try:
+        url = "https://stats.nba.com/stats/leaguedashteamstats?Season=2024-25&SeasonType=Regular+Season&PerMode=PerGame"
+        resp = requests.get(url, headers=HEADERS)
+        result = resp.json()["resultSets"][0]
+        df = pd.DataFrame(result["rowSet"], columns=result["headers"])
+        df = df[["TEAM_ID", "TEAM_NAME", "DEF_RATING", "PACE"]].rename(
+            columns={"DEF_RATING": "Opp_Def_Rtg", "PACE": "Opp_Pace"}
+        )
+        return df
+    except Exception as e:
+        st.warning(f"⚠️ No team defensive data found: {e}")
+        return pd.DataFrame()
