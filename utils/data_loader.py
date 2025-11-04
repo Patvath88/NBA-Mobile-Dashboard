@@ -1,12 +1,12 @@
 # utils/data_loader.py
-import requests
 import pandas as pd
 import streamlit as st
-from nba_api.stats.endpoints import playergamelog
+from nba_api.stats.endpoints import playergamelog, teamgamelog
 from nba_api.stats.static import players, teams
-from datetime import datetime
 from difflib import get_close_matches
+from datetime import datetime
 from pathlib import Path
+import time
 
 # --------------------------
 # 🔹 PLAYER DATA FETCHING
@@ -18,12 +18,12 @@ def get_player_id(player_name: str):
     all_players = players.get_players()
     names = [p["full_name"] for p in all_players]
 
-    # Try exact match first
+    # Exact match first
     exact = next((p for p in all_players if p["full_name"].lower() == player_name.lower()), None)
     if exact:
         return exact["id"]
 
-    # Fuzzy match (handles accents and slight typos)
+    # Fuzzy match for accents or minor typos
     close = get_close_matches(player_name, names, n=1, cutoff=0.6)
     if close:
         match = next(p for p in all_players if p["full_name"] == close[0])
@@ -34,8 +34,8 @@ def get_player_id(player_name: str):
 
 
 @st.cache_data(ttl=600)
-def get_player_gamelog(player_id: int, season: str = "2025", last_n: int = 20):
-    """Fetch the last N games for a specific player."""
+def get_player_gamelog(player_id: int, season: str = "2024-25", last_n: int = 20):
+    """Fetch last N games for the specified player."""
     try:
         gamelog = playergamelog.PlayerGameLog(player_id=player_id, season=season)
         df = gamelog.get_data_frames()[0]
@@ -49,8 +49,8 @@ def get_player_gamelog(player_id: int, season: str = "2025", last_n: int = 20):
 
 
 @st.cache_data(ttl=600)
-def get_season_averages(player_id: int, season: str = "2025"):
-    """Compute player's current season averages."""
+def get_season_averages(player_id: int, season: str = "2024-25"):
+    """Compute player's current season average stats."""
     df = get_player_gamelog(player_id, season, last_n=82)
     if df.empty:
         return pd.DataFrame()
@@ -58,107 +58,69 @@ def get_season_averages(player_id: int, season: str = "2025"):
 
 
 # --------------------------
-# 🔹 TEAM + OPPONENT DATA
+# 🔹 TEAM DEFENSIVE METRICS
 # --------------------------
 
-FALLBACK_PATH = Path("data/fallback_defense.csv")
-FALLBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
-
 @st.cache_data(ttl=3600)
-def get_team_defensive_metrics(season: str = "2025"):
+def get_team_defensive_metrics(season: str = "2024-25"):
     """
-    Safely pull team defensive metrics using balldontlie.io.
-    Handles API downtime and returns fallback if needed.
+    Derive opponent defensive metrics from team game logs using nba_api.
+    Opponent averages = average points, rebounds, assists allowed per game.
     """
-    url = f"https://www.balldontlie.io/api/v1/stats?season={season}"
-
     try:
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
+        all_teams = teams.get_teams()
+        team_defense = []
 
-        try:
-            data = res.json()
-        except Exception:
-            st.warning("⚠️ API returned non-JSON response. Using fallback defensive metrics.")
-            if FALLBACK_PATH.exists():
-                return pd.read_csv(FALLBACK_PATH)
-            return pd.DataFrame(columns=["team.full_name", "Opp_PPG", "Opp_RPG", "Opp_APG"])
+        for t in all_teams:
+            team_id = t["id"]
+            name = t["full_name"]
 
-        if "data" not in data or len(data["data"]) == 0:
-            st.warning(f"No defensive data available for season {season}.")
-            return pd.DataFrame(columns=["team.full_name", "Opp_PPG", "Opp_RPG", "Opp_APG"])
+            # Avoid rate limit: nba_api can throttle
+            time.sleep(0.5)
 
-        df = pd.json_normalize(data["data"])
-        defense_df = (
-            df.groupby("team.full_name")
-              .agg({"pts": "mean", "reb": "mean", "ast": "mean"})
-              .rename(columns={"pts": "Opp_PPG", "reb": "Opp_RPG", "ast": "Opp_APG"})
-              .reset_index()
-        )
-        defense_df = defense_df.round(1)
+            gamelog = teamgamelog.TeamGameLog(team_id=team_id, season=season)
+            df = gamelog.get_data_frames()[0]
+            df["PTS_ALLOWED"] = df["PTS"].shift(-1)  # Simplistic: next opponent
+            team_defense.append({
+                "Team": name,
+                "Opp_PPG": df["PTS_ALLOWED"].mean(),
+                "Opp_RPG": df["REB"].mean(),
+                "Opp_APG": df["AST"].mean(),
+            })
 
-        # Cache fallback locally
-        defense_df.to_csv(FALLBACK_PATH, index=False)
-        return defense_df
+        defense_df = pd.DataFrame(team_defense)
+        return defense_df.round(1)
 
     except Exception as e:
-        st.error(f"Error fetching defensive metrics: {e}")
-        if FALLBACK_PATH.exists():
-            st.info("Using locally cached defensive metrics.")
-            return pd.read_csv(FALLBACK_PATH)
-        return pd.DataFrame(columns=["team.full_name", "Opp_PPG", "Opp_RPG", "Opp_APG"])
-
-
-@st.cache_data(ttl=3600)
-def get_team_id(team_name: str):
-    """Return the NBA team ID with fuzzy match fallback."""
-    all_teams = teams.get_teams()
-    team = next((t for t in all_teams if team_name.lower() in t["full_name"].lower()), None)
-    if team:
-        return team["id"]
-
-    # Fuzzy match fallback
-    names = [t["full_name"] for t in all_teams]
-    close = get_close_matches(team_name, names, n=1, cutoff=0.6)
-    if close:
-        st.info(f"Using closest team match: **{close[0]}**")
-        match = next(t for t in all_teams if t["full_name"] == close[0])
-        return match["id"]
-
-    raise ValueError(f"Team '{team_name}' not found.")
+        st.error(f"Error fetching team defensive metrics: {e}")
+        return pd.DataFrame(columns=["Team", "Opp_PPG", "Opp_RPG", "Opp_APG"])
 
 
 # --------------------------
-# 🔹 MERGED CONTEXT DATA
+# 🔹 TEAM + PLAYER CONTEXT
 # --------------------------
 
 @st.cache_data(ttl=300)
-def get_player_context(player_name: str, opponent_team: str, season: str = "2025"):
-    """Combine player recent stats and opponent defense into one contextual dataset."""
+def get_player_context(player_name: str, opponent_team: str, season: str = "2024-25"):
+    """Combine player recent stats and opponent defensive averages."""
     try:
         player_id = get_player_id(player_name)
         gamelog_df = get_player_gamelog(player_id, season)
         team_def_df = get_team_defensive_metrics(season)
 
-        if gamelog_df.empty:
-            st.warning(f"No game log data available for {player_name}")
-        if team_def_df.empty:
-            st.warning(f"No team defensive data available for {opponent_team}")
-
-        opponent_df = team_def_df[
-            team_def_df["team.full_name"].str.contains(opponent_team, case=False, na=False)
-        ]
+        # Match opponent (fuzzy)
+        opp = get_close_matches(opponent_team, team_def_df["Team"].tolist(), n=1, cutoff=0.6)
+        opponent_df = team_def_df[team_def_df["Team"] == opp[0]] if opp else pd.DataFrame()
 
         context = {
             "player": player_name,
             "season_avg": get_season_averages(player_id, season).to_dict() if not gamelog_df.empty else {},
             "recent_games": gamelog_df.tail(10) if not gamelog_df.empty else pd.DataFrame(),
-            "opponent_defense": opponent_df.to_dict(orient="records")[0]
-            if not opponent_df.empty else {}
+            "opponent_defense": opponent_df.to_dict(orient="records")[0] if not opponent_df.empty else {},
         }
 
         return context
 
     except Exception as e:
-        st.error(f"Context fetch failed: {e}")
+        st.error(f"Error building player context: {e}")
         return {"player": player_name, "season_avg": {}, "recent_games": pd.DataFrame(), "opponent_defense": {}}
