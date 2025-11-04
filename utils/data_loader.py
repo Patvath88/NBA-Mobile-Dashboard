@@ -1,100 +1,50 @@
 import pandas as pd
 import numpy as np
+import requests
 import streamlit as st
-from nba_api.stats.static import players, teams
-from nba_api.stats.endpoints import playergamelog, leaguedashteamstats
-from requests.exceptions import RequestException
 
-# ------------------------------------------------------
-# 🏀 Player Data
-# ------------------------------------------------------
-@st.cache_data(ttl=3600)
-def get_player_id(player_name: str):
-    """Return the player ID using fuzzy match."""
+NBA_BASE_URL = "https://stats.nba.com/stats/"
+HEADERS = {
+    "Host": "stats.nba.com",
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json, text/plain, */*",
+    "x-nba-stats-origin": "stats",
+    "x-nba-stats-token": "true",
+}
+
+
+def build_feature_dataset(player_id: int, season="2024-25"):
+    """Builds rolling feature dataset for model training."""
     try:
-        all_players = players.get_active_players()
-        match = next((p for p in all_players if player_name.lower() in p["full_name"].lower()), None)
-        if match:
-            return match["id"]
-        else:
-            # Try closest fuzzy match
-            from difflib import get_close_matches
-            names = [p["full_name"] for p in all_players]
-            close = get_close_matches(player_name, names, n=1, cutoff=0.4)
-            if close:
-                st.info(f"Using closest match: {close[0]}")
-                pid = next((p["id"] for p in all_players if p["full_name"] == close[0]), None)
-                return pid
-        raise ValueError(f"Player '{player_name}' not found in NBA API.")
-    except Exception as e:
-        st.error(f"Error finding player: {e}")
-        return None
+        url = f"https://stats.nba.com/stats/playergamelog?PlayerID={player_id}&Season={season}&SeasonType=Regular+Season"
+        resp = requests.get(url, headers=HEADERS)
+        result = resp.json()["resultSets"][0]
+        df = pd.DataFrame(result["rowSet"], columns=result["headers"])
 
+        # Convert numeric fields
+        numeric_cols = [
+            "MIN", "FGM", "FGA", "FG_PCT", "FG3M", "FG3A", "FG3_PCT",
+            "FTM", "FTA", "FT_PCT", "OREB", "DREB", "REB", "AST", "STL",
+            "BLK", "TOV", "PF", "PTS", "PLUS_MINUS"
+        ]
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-@st.cache_data(ttl=3600)
-def get_player_gamelog(player_id: int, season: str = "2024-25"):
-    """Return player game logs."""
-    try:
-        res = playergamelog.PlayerGameLog(player_id=player_id, season=season)
-        df = res.get_data_frames()[0]
         df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-        df.sort_values("GAME_DATE", inplace=True)
+        df = df.sort_values("GAME_DATE").reset_index(drop=True)
+
+        # Rolling features
+        roll_features = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG_PCT", "FG3M"]
+        for f in roll_features:
+            df[f"{f}_roll5"] = df[f].rolling(5, min_periods=1).mean()
+
+        df["USG"] = df["FGA"] + df["FTA"] + df["TOV"]
+        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
+        df["EFF"] = df["PTS"] + df["REB"] + df["AST"] + df["STL"] + df["BLK"] - ((df["FGA"] - df["FGM"]) + (df["FTA"] - df["FTM"]) + df["TOV"])
+
+        df["Player_ID"] = player_id
         return df
+
     except Exception as e:
-        st.error(f"Error loading player gamelog: {e}")
+        st.error(f"Error building features: {e}")
         return pd.DataFrame()
-
-
-# ------------------------------------------------------
-# 🛡️ Team Defense (fast + cached fallback)
-# ------------------------------------------------------
-@st.cache_data(ttl=604800)  # refresh weekly
-def get_team_defensive_metrics(season: str = "2024-25"):
-    """Get team defensive rating and pace from NBA API or cached fallback."""
-    try:
-        res = leaguedashteamstats.LeagueDashTeamStats(
-            season=season,
-            per_mode_detailed="PerGame",
-            measure_type_detailed_defense="Defense"
-        )
-        df = res.get_data_frames()[0][["TEAM_NAME", "DEF_RATING", "PACE"]]
-        df.rename(columns={"TEAM_NAME": "Team", "DEF_RATING": "DefRtg"}, inplace=True)
-        st.success("✅ Team defensive metrics loaded from NBA API.")
-        return df
-    except (RequestException, Exception) as e:
-        st.warning(f"⚠️ Using fallback defensive data ({e})")
-        fallback_data = {
-            "Team": [
-                "Boston Celtics", "Milwaukee Bucks", "Denver Nuggets",
-                "Dallas Mavericks", "Golden State Warriors", "Los Angeles Lakers",
-                "Miami Heat", "Phoenix Suns"
-            ],
-            "DefRtg": [108.4, 110.1, 109.3, 112.0, 114.7, 113.9, 111.2, 110.9],
-            "PACE": [97.4, 99.1, 98.5, 100.2, 101.8, 99.9, 96.7, 100.5]
-        }
-        return pd.DataFrame(fallback_data)
-
-
-# ------------------------------------------------------
-# 🔄 Context Builder
-# ------------------------------------------------------
-@st.cache_data(ttl=1800)
-def get_player_context(player_name: str, season: str = "2024-25"):
-    """Return player game context + season averages."""
-    player_id = get_player_id(player_name)
-    if not player_id:
-        return None
-
-    gamelog_df = get_player_gamelog(player_id, season)
-    if gamelog_df.empty:
-        return None
-
-    recent = gamelog_df.tail(10).copy()
-    recent["PRA"] = recent["PTS"] + recent["REB"] + recent["AST"]
-
-    season_avg = gamelog_df.mean(numeric_only=True).round(1).to_dict()
-
-    return {
-        "recent_games": recent,
-        "season_avg": season_avg
-    }
