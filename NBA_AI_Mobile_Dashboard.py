@@ -109,7 +109,24 @@ df = get_games(pid, "2025-26")
 if df.empty:
     df = get_games(pid, "2024-25")
 
-
+if df.empty:
+    st.warning("No game data available yet.")
+else:
+    stats = ["PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]
+    preds = {s: predict_next(df[s]) for s in stats}
+    col_img, col_txt = st.columns([1,3])
+    with col_img:
+        photo = get_player_photo(pid)
+        if photo:
+            st.image(photo, width=140)
+    with col_txt:
+        st.subheader(player_name)
+        st.caption("Projected Next Game (AI Forecast)")
+    for s, v in preds.items():
+        st.markdown(
+            f"<div class='metric-card'><b>{s}</b><br>{v}</div>",
+            unsafe_allow_html=True
+        )
     else:
         stats = ["PTS","REB","AST","FG3M","STL","BLK","TOV","PRA"]
         preds = {s: predict_next(df[s]) for s in stats}
