@@ -1,147 +1,50 @@
-# utils/feature_engineer.py
 import pandas as pd
 import numpy as np
+import requests
 import streamlit as st
-from utils.data_loader import get_player_gamelog, get_team_defensive_metrics
-from difflib import get_close_matches
 
-# ============================================================
-# 🧠 PLAYER FEATURE ENGINEERING PIPELINE
-# ============================================================
-
-# ------------------------------
-# 🧩 Rolling & Usage Features
-# ------------------------------
-def add_rolling_features(df: pd.DataFrame, window: int = 5):
-    """Add rolling averages for key stats."""
-    if df.empty:
-        return df
-    numeric_cols = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG_PCT", "FG3M"]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[f"{col}_roll{window}"] = df[col].rolling(window, min_periods=1).mean()
-    return df
+HEADERS = {
+    "Host": "stats.nba.com",
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json, text/plain, */*",
+    "x-nba-stats-origin": "stats",
+    "x-nba-stats-token": "true",
+}
 
 
-def add_usage_rate(df: pd.DataFrame):
-    """Estimate usage rate using FGA, FTA, and TOV."""
-    if {"FGA", "FTA", "TOV", "MIN"}.issubset(df.columns):
-        df["USG"] = (
-            (df["FGA"] + 0.44 * df["FTA"] + df["TOV"])
-            / df["MIN"].replace(0, np.nan)
-        ) * 100
-        df["USG"] = df["USG"].fillna(df["USG"].mean())
-    else:
-        df["USG"] = np.nan
-    return df
-
-
-def add_composite_metrics(df: pd.DataFrame):
-    """Add PRA and efficiency (EFF) metrics."""
-    if {"PTS", "REB", "AST"}.issubset(df.columns):
-        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
-    if {"PTS", "REB", "AST", "STL", "BLK", "TOV"}.issubset(df.columns):
-        df["EFF"] = (
-            df["PTS"] + df["REB"] + df["AST"] + df["STL"] + df["BLK"] - df["TOV"]
-        )
-    return df
-
-
-# ------------------------------
-# 🛡️ Opponent Defense Merge
-# ------------------------------
-def merge_opponent_defense(df: pd.DataFrame, season: str = "2024-25"):
-    """Merge opponent defensive metrics (pace + defensive rating)."""
+def build_feature_dataset(player_id: int, season="2024-25"):
+    """Builds rolling feature dataset for model training."""
     try:
-        team_def = get_team_defensive_metrics(season)
+        url = f"https://stats.nba.com/stats/playergamelog?PlayerID={player_id}&Season={season}&SeasonType=Regular+Season"
+        resp = requests.get(url, headers=HEADERS)
+        result = resp.json()["resultSets"][0]
+        df = pd.DataFrame(result["rowSet"], columns=result["headers"])
 
-        if team_def is None or team_def.empty:
-            st.warning("⚠️ No team defensive data found; skipping opponent merge.")
-            df["Opp_Def_Rtg"] = np.nan
-            df["Opp_Pace"] = np.nan
-            return df
-
-        # Normalize naming for consistency
-        team_def = team_def.rename(
-            columns={
-                "team.full_name": "Team",
-                "TEAM_NAME": "Team",
-                "TEAM": "Team"
-            }
-        )
-
-        if "Team" not in team_def.columns:
-            st.warning("⚠️ 'Team' column not found in defensive metrics.")
-            df["Opp_Def_Rtg"] = np.nan
-            df["Opp_Pace"] = np.nan
-            return df
-
-        # Extract opponent team abbreviation from MATCHUP (e.g. 'LAL vs BOS' -> 'BOS')
-        df["Opp_Team"] = df["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:, 0]
-        df["Opp_Team"] = df["Opp_Team"].str.strip()
-
-        # Fuzzy match opponent name
-        def match_team(opp):
-            if pd.isna(opp):
-                return None
-            match = get_close_matches(opp, team_def["Team"].tolist(), n=1, cutoff=0.4)
-            return match[0] if match else None
-
-        df["TeamMatch"] = df["Opp_Team"].apply(match_team)
-
-        merged = df.merge(team_def, how="left", left_on="TeamMatch", right_on="Team")
-        merged.drop(columns=["Team"], inplace=True, errors="ignore")
-
-        # If no numeric metrics exist, fill placeholders
-        if "DefRtg" not in merged.columns:
-            merged["DefRtg"] = np.nan
-        if "Pace" not in merged.columns:
-            merged["Pace"] = np.nan
-
-        merged.rename(columns={"DefRtg": "Opp_Def_Rtg", "Pace": "Opp_Pace"}, inplace=True)
-
-        return merged
-
-    except Exception as e:
-        st.error(f"Error merging opponent defense: {e}")
-        df["Opp_Def_Rtg"] = np.nan
-        df["Opp_Pace"] = np.nan
-        return df
-
-
-# ------------------------------
-# 🧩 Full Dataset Builder
-# ------------------------------
-@st.cache_data(ttl=3600)
-def build_feature_dataset(player_id: int, season: str = "2024-25"):
-    """End-to-end feature builder for model training."""
-    try:
-        df = get_player_gamelog(player_id, season)
-
-        if df is None or df.empty:
-            st.warning("No player game logs found.")
-            return pd.DataFrame()
-
-        # Step 1: Add rolling stats & derived features
-        df = add_rolling_features(df)
-        df = add_usage_rate(df)
-        df = add_composite_metrics(df)
-
-        # Step 2: Merge defensive context
-        df = merge_opponent_defense(df, season)
-
-        # Step 3: Drop non-numeric or unnecessary columns
-        drop_cols = [
-            "MATCHUP", "VIDEO_AVAILABLE", "Opp_Team",
-            "TeamMatch", "TEAM_ABBREVIATION", "GAME_ID"
+        # Convert numeric fields
+        numeric_cols = [
+            "MIN", "FGM", "FGA", "FG_PCT", "FG3M", "FG3A", "FG3_PCT",
+            "FTM", "FTA", "FT_PCT", "OREB", "DREB", "REB", "AST", "STL",
+            "BLK", "TOV", "PF", "PTS", "PLUS_MINUS"
         ]
-        df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True, errors="ignore")
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Step 4: Keep only numeric features for modeling
-        df = df.select_dtypes(include=[np.number]).fillna(0)
+        df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+        df = df.sort_values("GAME_DATE").reset_index(drop=True)
 
+        # Rolling averages
+        roll_features = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FG_PCT", "FG3M"]
+        for f in roll_features:
+            df[f"{f}_roll5"] = df[f].rolling(5, min_periods=1).mean()
+
+        df["USG"] = df["FGA"] + df["FTA"] + df["TOV"]
+        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
+        df["EFF"] = df["PTS"] + df["REB"] + df["AST"] + df["STL"] + df["BLK"] - (
+            (df["FGA"] - df["FGM"]) + (df["FTA"] - df["FTM"]) + df["TOV"]
+        )
+
+        df["Player_ID"] = player_id
         return df
-
     except Exception as e:
-        st.error(f"Error building feature dataset: {e}")
+        st.error(f"Error building features: {e}")
         return pd.DataFrame()
