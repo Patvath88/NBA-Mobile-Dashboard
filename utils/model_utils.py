@@ -64,10 +64,50 @@ def train_xgboost_models(df: pd.DataFrame):
 # ------------------------------------------------------
 # 🎯 Prediction
 # ------------------------------------------------------
-def predict_next_game(df: pd.DataFrame):
-    models = load_or_train_cached_model(df)
-    if not models:
+def predict_next_game(df, models=None):
+    """
+    Predict next game stats with feature alignment to prevent XGBoost mismatch errors.
+    """
+    import numpy as np
+    import streamlit as st
+
+    try:
+        if df is None or df.empty:
+            st.error("No valid data for prediction.")
+            return {}
+
+        # Drop non-numeric columns if any
+        df_numeric = df.select_dtypes(include=[np.number]).copy()
+        if df_numeric.empty:
+            st.error("No numeric features available for prediction.")
+            return {}
+
+        # Use only last game for context
+        latest_features = df_numeric.tail(1).copy()
+
+        # Align feature columns with trained model
+        if models and "PTS" in models:
+            expected_features = models["PTS"].get_booster().feature_names
+            if expected_features:
+                available_features = latest_features.columns.tolist()
+                missing_cols = [col for col in expected_features if col not in available_features]
+                extra_cols = [col for col in available_features if col not in expected_features]
+
+                # Add missing columns with default 0
+                for col in missing_cols:
+                    latest_features[col] = 0
+
+                # Drop extra columns not used during training
+                latest_features = latest_features[[c for c in expected_features if c in latest_features.columns]]
+
+        preds = {}
+        for stat, model in models.items():
+            pred_value = model.predict(latest_features)[0]
+            preds[stat] = round(float(pred_value), 1)
+
+        return preds
+
+    except Exception as e:
+        st.error(f"Error during prediction alignment: {e}")
         return {}
-    last = df.tail(1).select_dtypes(include=[np.number])
-    preds = {t: float(models[t].predict(last)[0]) for t in models}
-    return preds
+
