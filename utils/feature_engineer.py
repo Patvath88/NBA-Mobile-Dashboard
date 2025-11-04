@@ -34,7 +34,7 @@ def add_context_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-ddef merge_opponent_defense(df: pd.DataFrame, season: str = "2024-25"):
+def merge_opponent_defense(df: pd.DataFrame, season: str = "2024-25"):
     """Merge opponent defensive averages into player game logs."""
     team_def = get_team_defensive_metrics(season)
 
